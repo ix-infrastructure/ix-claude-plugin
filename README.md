@@ -6,7 +6,7 @@ A Claude Code plugin that makes Claude always use [Ix Memory](https://github.com
 
 ```
 /plugin marketplace add ix-infrastructure/ix-claude-plugin
-/plugin install @ix-memory/
+/plugin install ix-memory
 ```
 
 Restart Claude Code after installing.
@@ -27,6 +27,8 @@ brew install jq ripgrep
 
 ## What It Does
 
+### Automatic hooks
+
 | Trigger | Hook | Effect |
 |---------|------|--------|
 | User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min |
@@ -37,6 +39,20 @@ brew install jq ripgrep
 | Claude finishes responding | `Stop` → `ix-map.sh` (async) | Runs `ix map` to refresh the full architectural graph |
 
 All hooks bail silently if `ix` is not in PATH or the backend is unreachable.
+
+### Skills (slash commands)
+
+| Command | Description |
+|---------|-------------|
+| `/ix-search <term>` | Graph-aware search combining `ix text` + `ix locate` |
+| `/ix-explain <symbol>` | Explain what a symbol does using `ix explain` |
+| `/ix-impact <target>` | Analyze blast radius of changing a symbol or file |
+| `/ix-trace <symbol>` | Trace the execution flow or call chain for a symbol |
+| `/ix-smells` | Detect code smells and structural issues |
+
+### Agent
+
+The `ix-explorer` sub-agent is available for deep codebase exploration tasks. Claude will automatically delegate to it when exploring unfamiliar code, tracing data flows, or assessing change impact. It uses ix commands exclusively before falling back to native tools.
 
 ## Uninstall
 
