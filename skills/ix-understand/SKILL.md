@@ -1,120 +1,74 @@
 ---
 name: ix-understand
-description: Explain an entire codebase, subsystem, or module using ix graph-aware analysis. Produces a structured architectural document covering purpose, structure, flows, dependencies, and ambiguities. Use this for system-level questions, not single-symbol questions.
-argument-hint: [target]
+description: Build a mental model of a system, subsystem, or the whole repo. Graph-first, no code reads unless necessary.
+argument-hint: [target — subsystem name, path, or empty for whole repo]
 ---
 
-# Reasoning protocol
+Check `command -v ix` first. If unavailable, stop and say so.
 
-Check `command -v ix` first. If unavailable, stop and say so. Do not start with file reads or Glob sweeps.
+## Goal
 
-## Step 1 — Scope resolution
+Build an accurate mental model of the target's structure, purpose, and key components. Stop as soon as you can answer: *what does this do, what are its key parts, and where should someone explore next?*
 
-Parse `$ARGUMENTS`:
+## Phase 1 — Orient (always run)
 
-| Input | Action |
-|---|---|
-| empty | whole-repo scope |
-| `"X in Y"` / `"X of Y"` / `"X within Y"` | target=X, treat Y as context hint |
-| file path or directory | path scope |
-| anything else | subsystem/module name |
-
-For any non-empty target, run as a fast first probe:
-```bash
-ix locate "$TARGET" --limit 5 --format json
-```
-If locate returns a clear hit, use that as the resolved target. If ambiguous or empty, note: "Interpreting target as X — [reason]."
-
-## Step 2 — Discovery
-
-**Targeted scope** — run in parallel:
-```bash
-ix overview "$TARGET" --format json
-```
-If overview returns nothing, fall back to:
-```bash
-ix text "$TARGET" --limit 15 --format json
-```
-Run `ix inventory --path "$TARGET"` only if target is a file path or directory.
-
-**Whole-repo scope only** — run in parallel:
+Run in parallel:
 ```bash
 ix subsystems --format json
 ix rank --by dependents --kind class --top 10 --exclude-path test --format json
-ix rank --by callers --kind function --top 10 --exclude-path test --format json
+ix rank --by callers   --kind function --top 10 --exclude-path test --format json
 ```
 
-> Use `ix subsystems` (reads persisted map, fast) rather than `ix map` (re-runs full clustering, slow). Only run `ix map` if `ix subsystems` returns no regions.
+If `$ARGUMENTS` is non-empty, also run:
+```bash
+ix locate "$ARGUMENTS" --limit 5 --format json
+```
 
-## Step 3 — Component deep-dive
+Extract from subsystems: region names, file counts, cohesion scores.
+Extract from rank: the 3–5 most structurally central classes and functions.
 
-From overview/rank results, pick the **2–4 most central or unclear** components. Run in parallel:
+**Stop here if:** `$ARGUMENTS` is empty and rank + subsystems give a clear picture.
+
+## Phase 2 — Key components (run only if needed)
+
+Pick the **2–4 most central or unclear** components from Phase 1 results. Run in parallel:
+```bash
+ix overview <component> --format json
+```
+
+Do NOT run `ix explain` yet. `ix overview` is cheaper and sufficient for most components.
+
+**Stop here if:** you can describe what each component does and how they relate.
+
+## Phase 3 — Clarify (run only if still unclear)
+
+For at most **2** components still unclear after Phase 2:
 ```bash
 ix explain <component> --format json
 ```
-Skip components the overview already fully described.
 
-## Step 4 — Flow tracing (conditional)
+**Hard limits:** No `ix read`. No `ix map`. No `ix trace`. This skill never reads source code.
 
-Only run if the query implies a pipeline, data flow, request path, or execution sequence:
-```bash
-ix trace <entry-point> --format json
-```
-One trace is enough — pick the most representative path.
-
-## Step 5 — Dependencies
-
-From the ix output gathered, extract:
-- External deps (third-party, external services)
-- Internal cross-module deps
-- What this scope exposes vs consumes
-
-Only read source files if a dependency is unclear after this step.
-
-## Step 6 — Uncertainty
-
-Label every significant claim: **Supported** (direct graph evidence), **Inferred** (reasonable from structure), **Uncertain** (weak/conflicting). Use hedged language for inferred claims.
-
----
-
-# Output
-
-Produce exactly these sections in order. Write "None identified" if a section has no content.
+## Output
 
 ```
-# [Target] — Architecture Overview
+# [Target] — System Overview
 
-> **Scope:** [repo | subsystem: <name> | path: <path>]
-> **Evidence quality:** [strong | partial | weak] — [one sentence why]
-> **Assumption:** [only if scope was ambiguous]
+## What it does
+[One paragraph. Purpose, primary job, who uses it.]
 
-## Overview
-[One paragraph: what it does, primary job, why it exists, who uses it.]
+## Key Components
+- **X** (<kind>) — [role in one line, evidence: rank position / cohesion score]
+- **Y** (<kind>) — [role in one line]
+[3–5 max. Omit if fully explained by parent.]
 
 ## Structure
-- **ComponentA** — [role in one line]
-- **ComponentB** — [role in one line]
-[2–5 components. Group by layer if applicable: interface / orchestration / persistence / utilities.]
+[Subsystem breakdown: name → file count → cohesion score → what it owns]
 
-## Key Flows
-1. [Entry point] → [step] → [step] → [outcome]
-2. [Second flow only if meaningfully different]
-
-## Dependencies
-**Consumes:**
-- `dep-name` — [what it's used for]
-
-**Exposes:**
-- `interface` — [who consumes it]
-
-## Risks & Ambiguity
-- [claim or gap] — *inferred* / *uncertain* — [why]
-
-## Next Drill-Downs
-- `/ix-trace <entry-point>` — trace main execution path
-- `/ix-explain <ComponentA>` — deeper look at its role
-- `/ix-impact <ComponentB>` — blast radius before modifying
-- `/ix-understand <sub-scope>` — narrow into specific area
+## Where to explore next
+- `/ix-investigate <X>` — understand the most central component
+- `/ix-architecture` — analyze coupling and design health
+- `/ix-debug <X>` — if investigating a suspected bug
 ```
 
-Formatting: `##` headers, `**bold**` component names, code ticks for symbols/paths/commands, bullet lists for Structure and Dependencies, numbered lists for Key Flows, no trailing summary paragraph.
+**Evidence labels:** Mark every claim as `[graph]` (direct ix data) or `[inferred]` (structural reasoning). Never state facts without one of these labels.

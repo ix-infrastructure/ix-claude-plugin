@@ -1,45 +1,73 @@
 ---
 name: ix-impact
-description: Analyze the blast radius and downstream impact of changing a symbol, file, or module using Ix Memory
+description: Change risk analysis — blast radius, affected systems, and what to test. Depth scales with risk level; low-risk targets stop early.
 argument-hint: <symbol or file>
 ---
 
-If `command -v ix` is unavailable, use Grep to find all usages of the target and estimate impact from that.
+Check `command -v ix` first. If unavailable, use Grep to find all usages and estimate impact manually.
 
-Run `ix impact $ARGUMENTS --format json`.
+## Goal
 
-If impact returns nothing or is ambiguous, run `ix locate $ARGUMENTS --format json` to resolve the symbol, then retry with `--path` or `--pick`.
+Answer: *what breaks if this changes, and is it safe to proceed?* Stop as early as the risk level allows.
 
-## Decision framework after getting results
+## Phase 1 — Risk score (always)
 
-**Risk level: critical or high AND direct dependents > 5:**
-Also run in parallel:
 ```bash
+ix impact $ARGUMENTS --format json
+```
+
+**Immediately classify:**
+
+| Risk level | Action |
+|---|---|
+| `low` + < 3 dependents | **STOP** — safe to proceed. Report and suggest verification targets. |
+| `medium` OR 3–10 dependents | Go to Phase 2 |
+| `high` or `critical` OR > 10 dependents | Go to Phase 2 + 3 |
+
+## Phase 2 — Callers and dependents (medium/high/critical)
+
+Run in parallel:
+```bash
+ix callers  $ARGUMENTS --limit 20 --format json
 ix depends  $ARGUMENTS --depth 2 --format json
-ix callers  $ARGUMENTS --format json
-```
-Then suggest `/ix-plan $ARGUMENTS` before making changes.
-
-**Risk level: medium, OR direct dependents 2–5:**
-Note the key callers by name. Suggest verifying those callers after the change.
-
-**Risk level: low, OR direct dependents < 2:**
-Safe to proceed. Note any callers for completeness.
-
-## Output structure
-
-```
-Risk level: <critical|high|medium|low>
-Summary: <riskSummary from ix>
-Direct dependents: <N> | Transitive (depth 2): <M>
-At-risk behavior: <list from atRiskBehavior>
-
-[If high/critical — also show:]
-Key callers: <top 5 from callers query>
-Propagation: <which subsystems are affected>
-
-Verdict: <SAFE | REVIEW FIRST | HIGH RISK — see /ix-plan>
-Next step: <nextStep from ix output>
 ```
 
-Suggest `/ix-trace $ARGUMENTS` to understand the execution path, or `/ix-before-edit $ARGUMENTS` for a full pre-edit safety check.
+Extract: direct callers by name and subsystem, transitive count.
+
+**Stop here if risk is `medium`:** report callers, suggest verification, done.
+
+## Phase 3 — Import chain and subsystem spread (high/critical only)
+
+```bash
+ix imported-by $ARGUMENTS --format json
+```
+
+Cross-reference callers + dependents + importers to identify:
+- Which subsystems are in the blast radius
+- Whether the change crosses an architectural boundary
+- Any tests that cover the affected paths
+
+## Output
+
+```
+## Impact: [target]
+
+**Risk level:** <critical | high | medium | low>
+**Verdict:** <SAFE TO PROCEED | REVIEW CALLERS FIRST | NEEDS CHANGE PLAN>
+
+**Blast radius:**
+- Direct dependents: N
+- Transitive (depth 2): M
+- Subsystems affected: [list — only if phase 3 ran]
+
+**Key callers:** [top 5, with subsystem label]
+
+**At-risk behaviors:** [from ix impact atRiskBehavior field]
+
+**Recommended action:**
+- low: proceed, verify [specific callers]
+- medium: test [caller list] after change
+- high/critical: run `/ix-plan $ARGUMENTS` before editing
+```
+
+Never read source code in this skill. Risk analysis is purely graph-based.

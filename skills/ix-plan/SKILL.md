@@ -1,71 +1,91 @@
 ---
 name: ix-plan
-description: Pre-implementation change plan — given a list of files or symbols to modify, assesses blast radius for each, traces data flows between them, and produces a risk-annotated change plan. Use before any multi-file implementation.
-argument-hint: <symbol1> [symbol2] [symbol3] ...
+description: Generate a risk-ordered implementation plan for a set of targets. Assesses blast radius per target, finds data flows between them, and produces a safe change sequence.
+argument-hint: <symbol1> [symbol2] [symbol3] ... OR description of change
 ---
 
-If `command -v ix` is unavailable, use Grep + Read to manually assess blast radius for each target.
+Check `command -v ix` first. If unavailable, use Grep + Read to manually assess blast radius per target.
 
-Parse `$ARGUMENTS` as a space-separated list of targets (files or symbols).
+## Goal
 
-## Step 1 — Impact each target in parallel
+Answer: *in what order should these changes be made, what will break, and what needs testing?*
 
-For each target in the list, run simultaneously:
+## Phase 1 — Scope (always)
+
+If `$ARGUMENTS` contains symbol names, proceed.
+If `$ARGUMENTS` is a description (no identifiable symbols), first run:
+```bash
+ix text "$ARGUMENTS" --limit 10 --format json
+ix locate "$ARGUMENTS" --limit 5 --format json
+```
+Identify the 1–4 most relevant symbols and treat those as targets.
+
+## Phase 2 — Impact per target (parallel)
+
+For each identified target, run simultaneously:
 ```bash
 ix impact  <target> --format json
-ix callers <target> --format json
+ix callers <target> --limit 10 --format json
 ```
 
-## Step 2 — Trace data flow between targets
+Rank targets by risk level: critical > high > medium > low.
 
-If there are 2+ targets, find how they connect:
+## Phase 3 — Data flow (only if 2+ targets)
+
+Find how the targets connect:
 ```bash
-ix trace <target1> --to <target2> --format json
+ix trace <highest-risk-target> --to <second-target> --format json
 ```
-Run for the most architecturally significant pair (highest combined impact).
 
-## Step 3 — Check for shared dependents
+Run for the most architecturally significant pair. Skip if targets are in independent subsystems.
 
-Find if any third symbol depends on multiple targets (shared blast radius):
+## Phase 4 — Shared dependents (only if high/critical targets exist)
+
 ```bash
 ix depends <highest-risk-target> --depth 2 --format json
 ```
 
-## Step 4 — Synthesize into a change plan
+Identify if any third symbol depends on multiple targets (shared blast radius — highest testing priority).
 
-Output:
+## Phase 5 — Ix Pro plan (if ix pro available)
+
+If `ix briefing` returns plans/tasks, check for existing relevant plans:
+```bash
+ix plans --format json
+```
+Skip this phase if ix pro is unavailable.
+
+## Output
 
 ```
-# Change Plan: <description from arguments>
+# Change Plan
 
 ## Targets & Risk
 
-| Target | Risk | Direct Deps | Key Callers |
-|--------|------|-------------|-------------|
-| <A>    | high | 12          | X, Y, Z     |
-| <B>    | low  | 2           | P           |
+| Target | Risk | Dependents | Key Callers |
+|--------|------|------------|-------------|
+| <A>    | high | 12         | X, Y, Z     |
+| <B>    | low  | 2          | P           |
 
 ## Change Order
 
 Edit in this sequence to minimize breakage:
-1. <lowest-risk or most-depended-upon first — explain why>
+1. [target] — [reason: lowest risk / most-depended-upon first]
 2. ...
 
 ## Data Flow
-
-<A> → <trace path> → <B> (if connected)
+[A → trace path → B — or "targets are independent"]
 
 ## Shared Risk
+[Symbols affected by changes to multiple targets — these need testing after every change]
 
-Symbols affected by changes to both targets: <list>
-
-## Testing Checkpoints
-
-After each change, verify:
-- <specific callers or tests to check per target>
+## Test Checkpoints
+After [target A]: verify [specific callers]
+After [target B]: verify [specific callers]
 
 ## Red Flags
-
-- <any critical/high risk target that needs extra care>
-- <any cross-subsystem boundary being crossed>
+- [any critical/high target needing extra care]
+- [any cross-subsystem boundary being crossed]
 ```
+
+Do not read source code in this skill unless a target cannot be resolved by `ix locate`.

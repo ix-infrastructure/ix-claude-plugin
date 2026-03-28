@@ -1,6 +1,8 @@
 # ix-claude-plugin
 
-A Claude Code plugin that makes Claude always use [Ix Memory](https://github.com/ix-infrastructure/IX-Memory) for codebase understanding — injecting session context on every prompt, intercepting all searches and file reads with graph-aware queries, and keeping the Ix graph current as Claude edits.
+A Claude Code plugin that turns Claude into a **graph-reasoning engineering agent** using [Ix Memory](https://github.com/ix-infrastructure/IX-Memory) as its structured memory backend.
+
+Claude + Ix = reasoning engine + persistent code knowledge graph. Skills are cognitive abstractions (not CLI wrappers) that minimize token usage and maximize accuracy.
 
 ## Installation
 
@@ -25,46 +27,49 @@ sudo apt install jq ripgrep
 brew install jq ripgrep
 ```
 
-**Ix Pro** is optional. All skills and hooks work with basic ix. If ix pro is installed, the session briefing hook (`ix-briefing.sh`) will additionally inject goals, bugs, and decisions at the start of each prompt.
+**Ix Pro** is optional. All skills and hooks work with basic Ix. Pro adds session briefing injection (goals, bugs, decisions) via the `ix-briefing.sh` hook.
 
-## What It Does
+## Skills
 
-### Automatic hooks
+High-level cognitive skills — each one infers intent, orchestrates multiple graph queries, and synthesizes output. None are CLI aliases.
+
+| Skill | What it does | Key rule |
+|-------|-------------|----------|
+| `/ix-understand [target]` | Build a mental model of a system or the whole repo | Graph only — no source reads |
+| `/ix-investigate <symbol>` | Deep dive: what it is, how it connects, execution path | Graph first, one symbol read max |
+| `/ix-impact <target>` | Change risk: blast radius, affected systems, test targets | Depth scales with risk level |
+| `/ix-plan <targets...>` | Risk-ordered implementation plan for a set of changes | Parallel impact, finds shared dependents |
+| `/ix-debug <symptom>` | Root cause analysis from symptom to candidates | Targeted reads at suspects only |
+| `/ix-architecture [scope]` | Design health: coupling, smells, hotspots | Graph only — never reads source |
+| `/ix-docs <target> [--out <path>] [--full] [--split] [--single-doc] [--concise] [--depth N] [--focus area]` | Generate full engineer-quality documentation to a file | Adaptive tier budget; `--full` for complete repo coverage with auto-split |
+
+All skills fall back gracefully when ix is unavailable.
+
+## Agents
+
+Autonomous multi-step agents for complex tasks:
+
+| Agent | Purpose |
+|-------|---------|
+| `ix-explorer` | General-purpose graph exploration, open-ended questions |
+| `ix-system-explorer` | Full architectural model of a codebase or region |
+| `ix-bug-investigator` | Autonomous investigation from symptom to root cause candidates |
+| `ix-safe-refactor-planner` | Blast radius + safe change sequencing for refactors |
+| `ix-architecture-auditor` | Full structural health report with ranked improvements |
+
+## Automatic hooks
 
 | Trigger | Hook | Effect |
 |---------|------|--------|
-| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires ix pro** |
+| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro** |
 | Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Front-runs with `ix text` + `ix locate`/`ix inventory` |
 | Claude runs `Read` | `PreToolUse` → `ix-read.sh` | Front-runs with `ix inventory` + `ix overview` for the file |
 | Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts pattern, front-runs with `ix text` + `ix locate` |
-| Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Runs `ix map <file>` to update the graph for the changed file |
-| Claude finishes responding | `Stop` → `ix-map.sh` (async) | Runs `ix map` to refresh the full architectural graph |
+| Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | Runs `ix impact` before the edit |
+| Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Runs `ix map <file>` to update the graph |
+| Claude finishes responding | `Stop` → `ix-map.sh` (async) | Runs `ix map` to refresh the full graph |
 
 All hooks bail silently if `ix` is not in PATH or the backend is unreachable.
-
-### Skills (slash commands)
-
-| Command | Description |
-|---------|-------------|
-| `/ix-search <term>` | Graph-aware search combining `ix text` + `ix locate` |
-| `/ix-explain <symbol>` | Explain what a symbol does using `ix explain` |
-| `/ix-impact <target>` | Analyze blast radius of changing a symbol or file |
-| `/ix-trace <symbol>` | Trace the execution flow or call chain for a symbol |
-| `/ix-smells [path]` | Detect code smells and structural issues |
-| `/ix-understand [target]` | Full architectural overview of a subsystem, module, or the whole repo |
-| `/ix-investigate <symbol>` | Deep investigation chaining explain → trace → depends → callers → impact |
-| `/ix-depends <symbol>` | Show the full upstream dependency tree |
-| `/ix-diff <fromRev> <toRev>` | Show structural changes between two graph revisions |
-| `/ix-plan <symbol> [...]` | Risk-annotated change plan for multi-file implementations |
-| `/ix-before-edit <target>` | Pre-edit safety check — impact + callers + overview |
-| `/ix-read <symbol>` | Read just a symbol's source (resolves to exact file:lines) |
-| `/ix-subsystems [target]` | Explore the architectural map — systems, subsystems, cohesion metrics |
-
-All skills fall back gracefully when ix is unavailable — using Grep, Glob, and Read tools instead where possible.
-
-### Agent
-
-The `ix-explorer` sub-agent is available for deep codebase exploration tasks. Claude will automatically delegate to it when exploring unfamiliar code, tracing data flows, or assessing change impact. It uses ix commands exclusively before falling back to native tools.
 
 ## Uninstall
 

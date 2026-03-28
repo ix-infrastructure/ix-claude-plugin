@@ -1,7 +1,7 @@
 {
   "name": "ix-memory",
-  "version": "1.3.1",
-  "description": "Ix Memory integration — intercepts all searches and file reads with graph-aware ix queries, auto-ingests edits, refreshes the architectural map after each session, and provides /ix-understand for structured codebase and subsystem explanations.",
+  "version": "2.2.0",
+  "description": "Ix Memory integration — transforms Claude into a graph-reasoning agent with cognitive skills for understanding, investigation, impact analysis, planning, debugging, architecture auditing, and deep documentation synthesis.",
   "author": {
     "name": "Ix Memory"
   }
