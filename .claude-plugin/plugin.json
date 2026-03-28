@@ -4,5 +4,7 @@
   "description": "Ix Memory integration — intercepts all searches and file reads with graph-aware ix queries, auto-ingests edits, refreshes the architectural map after each session, and provides /ix-understand for structured codebase and subsystem explanations.",
   "author": {
     "name": "Ix Memory"
-  }
+  },
+  "agents": ["ix-explorer"],
+  "skills": ["ix-search", "ix-explain", "ix-impact", "ix-trace", "ix-smells", "ix-understand"]
 }
