@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate plugin structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON files
+        run: |
+          echo "── JSON validation ──"
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
+            if jq -e . "$f" >/dev/null 2>&1; then
+              echo "  [ok] $f"
+            else
+              echo "  [FAIL] $f is invalid JSON"
+              exit 1
+            fi
+          done
+
+      - name: Validate plugin version consistency
+        run: |
+          echo "── Version consistency ──"
+          PLUGIN_VER=$(jq -r '.version' .claude-plugin/plugin.json)
+          MARKETPLACE_VER=$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)
+          echo "  plugin.json:      $PLUGIN_VER"
+          echo "  marketplace.json: $MARKETPLACE_VER"
+          if [ "$PLUGIN_VER" != "$MARKETPLACE_VER" ]; then
+            echo "  [FAIL] version mismatch"
+            exit 1
+          fi
+          echo "  [ok] versions match"
+
+      - name: Validate expected skills
+        run: |
+          echo "── Skills ──"
+          FAIL=0
+          for skill in ix-understand ix-investigate ix-impact ix-plan ix-debug ix-architecture ix-docs; do
+            if [ -f "skills/$skill/SKILL.md" ]; then
+              echo "  [ok] $skill"
+            else
+              echo "  [FAIL] missing: skills/$skill/SKILL.md"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
+
+      - name: Validate expected agents
+        run: |
+          echo "── Agents ──"
+          FAIL=0
+          for agent in ix-explorer ix-system-explorer ix-bug-investigator ix-safe-refactor-planner ix-architecture-auditor; do
+            if [ -f "agents/$agent.md" ]; then
+              echo "  [ok] $agent"
+            else
+              echo "  [FAIL] missing: agents/$agent.md"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
+
+      - name: Validate hooks
+        run: |
+          echo "── Hooks ──"
+          FAIL=0
+          for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh; do
+            if [ -f "hooks/$hook" ] && [ -x "hooks/$hook" ]; then
+              echo "  [ok] $hook"
+            elif [ -f "hooks/$hook" ]; then
+              echo "  [FAIL] $hook exists but is not executable"
+              FAIL=1
+            else
+              echo "  [FAIL] missing: hooks/$hook"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
+
+  shellcheck:
+    name: Shellcheck hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck on hook scripts
+        run: |
+          echo "── Shellcheck ──"
+          FAIL=0
+          for f in hooks/*.sh test-local.sh; do
+            if shellcheck --severity=error "$f"; then
+              echo "  [ok] $f"
+            else
+              echo "  [FAIL] $f"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
