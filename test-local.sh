@@ -97,13 +97,21 @@ done
 
 echo ""
 echo "  Hooks:"
-for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh; do
+for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh ix-report.sh; do
   HOOK_FILE="$CACHE/hooks/$hook"
   if   [ -f "$HOOK_FILE" ] && [ -x "$HOOK_FILE" ]; then ok "$hook"
   elif [ -f "$HOOK_FILE" ]; then fail "$hook not executable"
   else fail "missing: hooks/$hook"
   fi
 done
+
+[ -f "$CACHE/hooks/ix-errors.sh" ] \
+  && ok "ix-errors.sh (library)" \
+  || fail "missing: hooks/ix-errors.sh"
+
+source "$CACHE/hooks/ix-errors.sh" 2>/dev/null \
+  && ok "ix-errors.sh: sourceable" \
+  || fail "ix-errors.sh: failed to source"
 
 jq -e . "$CACHE/hooks/hooks.json" >/dev/null 2>&1 \
   && ok "hooks.json is valid JSON" \
@@ -165,8 +173,9 @@ if [ "$FAILURES" -eq 0 ]; then
   echo "    /ix-impact <file or symbol>     ← blast radius before editing"
   echo "    /ix-debug <symptom>             ← root cause analysis"
   echo "    /ix-architecture                ← design health audit"
-  echo "    /ix-docs <target>               ← generate documentation"
-  echo "    /ix-docs <target> --full        ← full coverage doc"
+  echo "    /ix-docs <target>               ← narrative-first system documentation"
+  echo "    /ix-docs <target> --full --style hybrid"
+  echo "                                   ← deeper docs with selective reference"
   echo ""
   echo "  To confirm hooks are firing: stat /tmp/ix-healthy"
 else

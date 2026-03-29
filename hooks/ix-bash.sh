@@ -20,6 +20,10 @@ echo "$COMMAND" | grep -qE '^\s*(grep|rg)\s' || exit 0
 
 command -v ix >/dev/null 2>&1 || exit 0
 
+# ── Error reporting ───────────────────────────────────────────────────────────
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_HOOK_DIR}/ix-errors.sh" 2>/dev/null || true
+
 # ── Health check (30s TTL cache) ──────────────────────────────────────────────
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 _now=$(date +%s)
@@ -54,17 +58,27 @@ fi
 # ── Run ix text + ix locate in parallel ───────────────────────────────────────
 _text_tmp=$(mktemp)
 _loc_tmp=$(mktemp)
-trap 'rm -f "$_text_tmp" "$_loc_tmp"' EXIT
+_text_err=$(mktemp)
+_loc_err=$(mktemp)
+trap 'rm -f "$_text_tmp" "$_loc_tmp" "$_text_err" "$_loc_err"' EXIT
 
-ix text "$PATTERN" --limit 15 --format json > "$_text_tmp" 2>/dev/null &
+ix text "$PATTERN" --limit 15 --format json > "$_text_tmp" 2>"$_text_err" &
+_TEXT_PID=$!
 
 _is_plain=1
 echo "$PATTERN" | grep -qE '[\\^$\[\](){}|*+?]' && _is_plain=0
+_LOC_PID=""
 if [ "$_is_plain" -eq 1 ]; then
-  ix locate "$PATTERN" --limit 5 --format json > "$_loc_tmp" 2>/dev/null &
+  ix locate "$PATTERN" --limit 5 --format json > "$_loc_tmp" 2>"$_loc_err" &
+  _LOC_PID=$!
 fi
 
-wait
+wait $_TEXT_PID || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
+  "ix text '${PATTERN}'" "$(head -3 "$_text_err")"
+[ -n "$_LOC_PID" ] && {
+  wait $_LOC_PID || ix_capture_async "ix" "ix-locate" "locate failed" "$?" \
+    "ix locate '${PATTERN}'" "$(head -3 "$_loc_err")"
+}
 
 TEXT_RAW=$(cat "$_text_tmp")
 LOC_RAW=$(cat "$_loc_tmp" 2>/dev/null || echo "")

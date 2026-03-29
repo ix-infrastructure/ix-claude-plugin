@@ -1,6 +1,6 @@
 {
   "name": "ix-memory",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Ix Memory integration — transforms Claude into a graph-reasoning agent with cognitive skills for understanding, investigation, impact analysis, planning, debugging, architecture auditing, and deep documentation synthesis.",
   "author": {
     "name": "Ix Memory"

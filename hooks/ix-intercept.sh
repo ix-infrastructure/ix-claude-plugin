@@ -19,6 +19,10 @@ TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 
 command -v ix >/dev/null 2>&1 || exit 0
 
+# ── Error reporting ───────────────────────────────────────────────────────────
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_HOOK_DIR}/ix-errors.sh" 2>/dev/null || true
+
 # ── Health check (30s TTL cache) ──────────────────────────────────────────────
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 _now=$(date +%s)
@@ -52,18 +56,28 @@ if [ "$TOOL" = "Grep" ]; then
 
   _text_tmp=$(mktemp)
   _loc_tmp=$(mktemp)
-  trap 'rm -f "$_text_tmp" "$_loc_tmp"' EXIT
+  _text_err=$(mktemp)
+  _loc_err=$(mktemp)
+  trap 'rm -f "$_text_tmp" "$_loc_tmp" "$_text_err" "$_loc_err"' EXIT
 
-  ix text "${TEXT_ARGS[@]}" > "$_text_tmp" 2>/dev/null &
+  ix text "${TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
+  _TEXT_PID=$!
 
   # Only run locate for plain identifier patterns — skip regex metacharacters
   _is_plain=1
   echo "$PATTERN" | grep -qE '[\\^$\[\](){}|*+?]' && _is_plain=0
+  _LOC_PID=""
   if [ "$_is_plain" -eq 1 ]; then
-    ix locate "$PATTERN" --limit 5 --format json > "$_loc_tmp" 2>/dev/null &
+    ix locate "$PATTERN" --limit 5 --format json > "$_loc_tmp" 2>"$_loc_err" &
+    _LOC_PID=$!
   fi
 
-  wait
+  wait $_TEXT_PID || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
+    "ix text '${PATTERN}'" "$(head -3 "$_text_err")"
+  [ -n "$_LOC_PID" ] && {
+    wait $_LOC_PID || ix_capture_async "ix" "ix-locate" "locate failed" "$?" \
+      "ix locate '${PATTERN}'" "$(head -3 "$_loc_err")"
+  }
 
   TEXT_RAW=$(cat "$_text_tmp")
   LOC_RAW=$(cat "$_loc_tmp" 2>/dev/null || echo "")
@@ -118,7 +132,15 @@ elif [ "$TOOL" = "Glob" ]; then
   INV_ARGS=("--format" "json")
   INV_ARGS+=("--path" "$PATH_ARG")
 
-  INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>/dev/null) || exit 0
+  _inv_err=$(mktemp)
+  INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || {
+    _exit=$?
+    ix_capture_async "ix" "ix-inventory" "inventory failed" "$_exit" \
+      "ix inventory '$PATH_ARG'" "$(head -3 "$_inv_err")"
+    rm -f "$_inv_err"
+    exit 0
+  }
+  rm -f "$_inv_err"
   [ -z "$INV_RAW" ] && exit 0
 
   INV_JSON=$(parse_json "$INV_RAW")

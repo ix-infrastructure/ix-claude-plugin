@@ -25,6 +25,10 @@ esac
 
 command -v ix >/dev/null 2>&1 || exit 0
 
+# ── Error reporting ───────────────────────────────────────────────────────────
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_HOOK_DIR}/ix-errors.sh" 2>/dev/null || true
+
 # ── Health check (30s TTL cache) ──────────────────────────────────────────────
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 _now=$(date +%s)
@@ -61,12 +65,24 @@ BASENAME="${FILENAME%.*}"
 _inv_tmp=$(mktemp)
 _ov_tmp=$(mktemp)
 _imp_tmp=$(mktemp)
-trap 'rm -f "$_inv_tmp" "$_ov_tmp" "$_imp_tmp"' EXIT
+_inv_err=$(mktemp)
+_ov_err=$(mktemp)
+_imp_err=$(mktemp)
+trap 'rm -f "$_inv_tmp" "$_ov_tmp" "$_imp_tmp" "$_inv_err" "$_ov_err" "$_imp_err"' EXIT
 
-ix inventory --kind file --path "$FILENAME" --format json > "$_inv_tmp" 2>/dev/null &
-ix overview "$FILENAME" --format json                       > "$_ov_tmp"  2>/dev/null &
-ix impact   "$FILENAME" --format json                       > "$_imp_tmp" 2>/dev/null &
-wait
+ix inventory --kind file --path "$FILENAME" --format json > "$_inv_tmp" 2>"$_inv_err" &
+_INV_PID=$!
+ix overview "$FILENAME" --format json                     > "$_ov_tmp"  2>"$_ov_err"  &
+_OV_PID=$!
+ix impact   "$FILENAME" --format json                     > "$_imp_tmp" 2>"$_imp_err" &
+_IMP_PID=$!
+
+wait $_INV_PID || ix_capture_async "ix" "ix-inventory" "inventory failed" "$?" \
+  "ix inventory $FILENAME" "$(head -3 "$_inv_err")"
+wait $_OV_PID  || ix_capture_async "ix" "ix-overview"  "overview failed"  "$?" \
+  "ix overview $FILENAME"  "$(head -3 "$_ov_err")"
+wait $_IMP_PID || ix_capture_async "ix" "ix-impact"    "impact failed"    "$?" \
+  "ix impact $FILENAME"    "$(head -3 "$_imp_err")"
 
 INV_RAW=$(cat "$_inv_tmp")
 OV_RAW=$(cat "$_ov_tmp")

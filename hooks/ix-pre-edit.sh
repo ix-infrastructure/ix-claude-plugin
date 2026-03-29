@@ -27,6 +27,10 @@ esac
 
 command -v ix >/dev/null 2>&1 || exit 0
 
+# ── Error reporting ───────────────────────────────────────────────────────────
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_HOOK_DIR}/ix-errors.sh" 2>/dev/null || true
+
 # ── Health check (30s TTL cache) ──────────────────────────────────────────────
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 _now=$(date +%s)
@@ -43,7 +47,15 @@ fi
 # ── Run impact on the filename ────────────────────────────────────────────────
 FILENAME=$(basename "$FILE_PATH")
 
-RAW=$(ix impact "$FILENAME" --format json 2>/dev/null) || exit 0
+_imp_err=$(mktemp)
+RAW=$(ix impact "$FILENAME" --format json 2>"$_imp_err") || {
+  _exit=$?
+  ix_capture_async "ix" "ix-impact" "ix impact failed for $FILENAME" "$_exit" \
+    "ix impact $FILENAME" "$(head -3 "$_imp_err")"
+  rm -f "$_imp_err"
+  exit 0
+}
+rm -f "$_imp_err"
 [ -z "$RAW" ] && exit 0
 
 # Strip "Update available" header, extract the JSON object

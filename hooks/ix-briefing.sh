@@ -14,6 +14,10 @@ BRIEFING_TTL=600  # 10 minutes
 # Bail silently if ix is not in PATH
 command -v ix >/dev/null 2>&1 || exit 0
 
+# ── Error reporting ───────────────────────────────────────────────────────────
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_HOOK_DIR}/ix-errors.sh" 2>/dev/null || true
+
 IX_BRIEFING_CACHE="${TMPDIR:-/tmp}/ix-briefing-cache"
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 IX_PRO_CACHE="${TMPDIR:-/tmp}/ix-pro"
@@ -42,7 +46,15 @@ fi
 IX_PRO=$(cat "$IX_PRO_CACHE" 2>/dev/null || echo "0")
 [ "$IX_PRO" = "1" ] || exit 0
 
-BRIEFING=$(ix briefing --format json 2>/dev/null) || exit 0
+_bfr_err=$(mktemp)
+BRIEFING=$(ix briefing --format json 2>"$_bfr_err") || {
+  _exit=$?
+  ix_capture_async "ix" "ix-briefing" "ix briefing failed" "$_exit" \
+    "ix briefing" "$(head -3 "$_bfr_err")"
+  rm -f "$_bfr_err"
+  exit 0
+}
+rm -f "$_bfr_err"
 [ -z "$BRIEFING" ] && exit 0
 
 { echo "$_now"; echo "$BRIEFING"; } > "$IX_BRIEFING_CACHE"
