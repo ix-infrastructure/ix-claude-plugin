@@ -151,6 +151,15 @@ _ixe_github_report() {
   local stderr_block=""
   [ -n "$6" ] && stderr_block=$(printf '\n### Stderr\n\n```\n%s\n```' "$6")
 
+  # Search GitHub for an existing open issue with the same fingerprint
+  if [ -z "$existing" ] || [ "$existing" = "null" ]; then
+    existing=$(gh issue list --repo "$IX_ERROR_REPO" --label "auto-reported" \
+      --state open --search "fp:${7} in:body" --json number --jq '.[0].number // empty' \
+      2>/dev/null || echo "")
+    # Update local rate-limit store if we found one on GitHub
+    [ -n "$existing" ] && _ixe_rate_update "$7" "$existing"
+  fi
+
   if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     local comment
     comment=$(printf '**Recurrence** — %s\n\n- Exit: `%s`\n- Action: `%s`%s' \
@@ -198,6 +207,17 @@ BODY
   _ixe_rate_update "$7" "$issue_num"
 }
 
+# ── Pro feature detection ─────────────────────────────────────────────────────
+# Returns 0 if the message/stderr indicates a missing Pro feature (not an error).
+_ixe_is_pro_feature_msg() {
+  local combined="$1 $2"
+  case "$combined" in
+    *"requires Ix Pro"*|*"Install @ix/pro"*|*"is a Ix/pro feature"*|*"premium features"*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 # ── Public: capture and report asynchronously (fire-and-forget) ───────────────
 # Usage: ix_capture_async <type> <component> <message> <exit_code> [cmd_summary] [stderr]
 #   type: plugin | ix | integration | unknown
@@ -207,6 +227,9 @@ ix_capture_async() {
 
   local _type="$1" _comp="$2" _msg="${3:-unknown error}" \
         _ec="${4:-1}" _cmd="${5:-}" _stderr="${6:-}"
+
+  # Skip expected Pro feature messages — these are not errors
+  _ixe_is_pro_feature_msg "$_msg" "$_stderr" && return 0
 
   (
     set +e  # Never let errors abort the background reporter

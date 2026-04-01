@@ -55,6 +55,22 @@ for f in "$UNSENT_DIR"/*.json; do
   [ -z "$fp" ] && { rm -f "$f"; continue; }
   [ -z "$title" ] && { FAILED=$(( FAILED + 1 )); continue; }
 
+  # Check if an issue with this fingerprint already exists on GitHub
+  existing=$(gh issue list --repo "$IX_ERROR_REPO" --label "auto-reported" \
+    --state open --search "fp:${fp} in:body" --json number --jq '.[0].number // empty' \
+    2>/dev/null || echo "")
+
+  if [ -n "$existing" ]; then
+    # Issue already exists — add a recurrence comment instead of creating a duplicate
+    gh issue comment "$existing" --repo "$IX_ERROR_REPO" \
+      --body "**Recurrence** (retry) — $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+      >/dev/null 2>&1
+    _ixe_rate_update "$fp" "$existing"
+    rm -f "$f"
+    PROCESSED=$(( PROCESSED + 1 ))
+    continue
+  fi
+
   url=$(gh issue create \
     --repo "$IX_ERROR_REPO" \
     --title "$title" \
