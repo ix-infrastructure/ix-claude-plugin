@@ -19,20 +19,17 @@
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 IX_PRO_CACHE="${TMPDIR:-/tmp}/ix-pro"
 
-# ── Health check (30s TTL cache) ──────────────────────────────────────────────
-# Exits the calling script with 0 if ix is unavailable or unhealthy.
+# ── Health check (no ix status — commands fail fast on their own) ─────────────
+# Keeps a 300s TTL cache so ix_check_pro can schedule re-checks without
+# calling ix status (which takes 6s+ and would reliably timeout 10s hooks).
 ix_health_check() {
-  local _now _cached _cache_ok
+  local _now _cached
   _now=$(date +%s)
-  _cache_ok=0
   if [ -f "$IX_HEALTH_CACHE" ]; then
     _cached=$(cat "$IX_HEALTH_CACHE" 2>/dev/null || echo 0)
-    (( (_now - _cached) < 30 )) && _cache_ok=1
+    (( (_now - _cached) < 300 )) && return 0
   fi
-  if [ "$_cache_ok" -eq 0 ]; then
-    ix status >/dev/null 2>&1 || exit 0
-    echo "$_now" > "$IX_HEALTH_CACHE"
-  fi
+  echo "$_now" > "$IX_HEALTH_CACHE"
 }
 
 # ── Pro check (TTL tied to health check) ─────────────────────────────────────
@@ -74,10 +71,14 @@ ix_run_text_locate() {
   _TEXT_PID=$!
 
   _is_plain=1
-  echo "$_pattern" | grep -qE '[\\^$\[\](){}|*+?]' && _is_plain=0
+  # Two grep passes to avoid the ERE ']' bracket-close bug and '{}'  quantifier error
+  if printf '%s\n' "$_pattern" | grep -qE '[*+?^$.|\\]' || \
+     printf '%s\n' "$_pattern" | grep -qE '[][(){}]'; then
+    _is_plain=0
+  fi
   _LOC_PID=""
   if [ "$_is_plain" -eq 1 ]; then
-    ix locate "$_pattern" --limit 5 --format json > "$_loc_tmp" 2>"$_loc_err" &
+    ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
     _LOC_PID=$!
   fi
 
@@ -110,6 +111,7 @@ ix_summarize_text() {
     [ -n "$_files" ] && TEXT_PART="${TEXT_PART} in ${_files}"
     [ "$_more" -gt 0 ] && TEXT_PART="${TEXT_PART} (+${_more} more)"
   fi
+  return 0
 }
 
 # ── Summarise ix locate results ───────────────────────────────────────────────
@@ -129,4 +131,5 @@ ix_summarize_locate() {
     _cands=$(echo "$_json" | jq -r '.candidates[:3] | map(.name + " (" + .kind + ")") | join(", ")' 2>/dev/null || echo "")
     [ -n "$_cands" ] && LOC_PART="candidates: ${_cands}"
   fi
+  return 0
 }
