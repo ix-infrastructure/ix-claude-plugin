@@ -54,7 +54,7 @@ _ixe_store_local() {
     --arg type "$1"   --arg comp "$2"   --arg msg "$3" \
     --arg cmd "$4"    --arg ec "$5"     --arg stderr "$6" \
     '{ts:$ts,fp:$fp,type:$type,component:$comp,message:$msg,command:$cmd,exit_code:$ec,stderr:$stderr}' \
-    2>/dev/null >> "${IX_ERROR_STORE}/errors.jsonl" 2>/dev/null
+    >> "${IX_ERROR_STORE}/errors.jsonl" 2>/dev/null
 }
 
 # ── Public: capture and log locally (fire-and-forget) ─────────────────────────
