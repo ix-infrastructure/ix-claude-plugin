@@ -1,7 +1,7 @@
 ---
 name: ix-investigate
 description: Deep dive into a symbol, feature, or bug. Graph-first, minimal code reads, early stopping when sufficient evidence found.
-argument-hint: <symbol, feature description, or "how does X work">
+argument-hint: <symbol, function name, or "how does X work?">
 ---
 
 > [ix-claude-plugin shared model](../shared.md)

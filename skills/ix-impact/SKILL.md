@@ -1,7 +1,7 @@
 ---
 name: ix-impact
 description: Change risk analysis — blast radius, affected systems, and what to test. Depth scales with risk level; low-risk targets stop early.
-argument-hint: <symbol or file>
+argument-hint: <symbol or file path to assess change risk for>
 ---
 
 > [ix-claude-plugin shared model](../shared.md)

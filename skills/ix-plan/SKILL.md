@@ -1,7 +1,7 @@
 ---
 name: ix-plan
 description: Generate a risk-ordered implementation plan for a set of targets. Assesses blast radius per target, finds data flows between them, and produces a safe change sequence.
-argument-hint: <symbol1> [symbol2] [symbol3] ... OR description of change
+argument-hint: <symbol1> [symbol2...] or "description of what you want to change"
 ---
 
 > [ix-claude-plugin shared model](../shared.md)

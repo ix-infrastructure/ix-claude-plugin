@@ -1,14 +1,22 @@
 ---
 name: ix-understand
 description: Build a detailed architectural mental model of a system, subsystem, or the whole repo. Graph-first, source reads only when needed for data flow or key patterns.
-argument-hint: [target — subsystem name, path, or empty for whole repo]
+argument-hint: [target] [--shallow (default) | --medium | --deep]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, stop and say so.
 
-**MANDATORY: This skill MUST use the Agent tool (subagent_type: "ix-memory:ix-system-explorer") for all exploration work. Do NOT run ix commands yourself except for the Phase 1 orient commands below. All subsystem exploration MUST be delegated to agents.**
+## Flag parsing
+
+Parse `$ARGUMENTS` before doing anything else:
+- The first non-flag token is `TARGET` (may be empty — means whole repo)
+- `--shallow`: orient only, no agents (default if no flag given)
+- `--medium`: single agent regardless of system count
+- `--deep`: full parallel agent strategy
+
+**MANDATORY for `--medium` and `--deep`: This skill MUST use the Agent tool (subagent_type: "ix-memory:ix-system-explorer") for all exploration work. Do NOT run ix commands yourself except for the Phase 1 orient commands below. All subsystem exploration MUST be delegated to agents.**
 
 ## Phase 1 — Orient
 
@@ -27,24 +35,78 @@ From the results, identify:
 - The top 10-15 structurally important classes and functions
 - Total codebase scale (files, nodes, edges)
 
-If $ARGUMENTS specifies a target, scope the orient to that target's subsystems.
+If `TARGET` is set, scope the orient to that target's subsystems.
 
 **Confidence check:** Scan `confidence` scores in the `ix subsystems` results:
 - Any system with `confidence < 0.5`: add this caveat to the final output header: `⚠ Graph boundary confidence is low for [system] (${confidence}). Structural claims for this region may not reflect actual file relationships.`
 - Any system with `confidence < 0.3`: report fuzzy boundary as an explicit finding. Label **all** structural claims for that region as `[uncertain]`.
 
-## Phase 2 — Decide: serial or parallel
+## Depth routing
+
+Choose the path based on the parsed depth flag:
+
+### --shallow (default)
+
+Synthesize from Phase 1 data only — no agents. Produce:
+
+```
+# [TARGET or "Whole Repo"] — System Overview
+
+**Scale:** [files, nodes, edges — from ix stats]
+
+## Subsystem Map
+| Subsystem | Files | Cohesion | Coupling | Role |
+|-----------|-------|----------|----------|------|
+[one row per subsystem from ix subsystems]
+
+## Top Classes (by dependents)
+[top 10 from ix rank results]
+
+## Top Functions (by callers)
+[top 10 from ix rank results]
+
+## Quick Assessment
+[1–2 sentences on overall shape and structural health based on the metrics]
+```
+
+Then stop. Suggest deeper options at the bottom:
+> For a single-agent summary: `/ix-understand [target] --medium`
+> For full parallel analysis: `/ix-understand [target] --deep`
+
+### --medium
+
+Launch a **single** `ix-memory:ix-system-explorer` agent regardless of system count. Do not proceed to Phase 2.
+
+Pass:
+> Build an architectural mental model of: $TARGET (or the whole repo if no target)
+>
+> **Orient data (pre-computed):**
+> [Paste Phase 1 results — subsystem list, top components, stats]
+>
+> **Skip Step 1** — orient data is provided. Start from Step 2.
+>
+> **Depth:** Cover all major subsystems at one level of depth each. Prioritize breadth over depth — no need to drill into internals of every component.
+>
+> **Label every claim as [graph] or [inferred].**
+
+Present the agent's output directly to the user. Do not proceed to Phase 2.
+
+### --deep
+
+Continue to Phase 2.
+
+## Phase 2 — Decide: serial or parallel (--deep only)
 
 Count the number of **significant top-level systems** (file count >= 10 or confidence >= 0.5).
 
 - **≤ 3 significant systems**: Launch a **single** `ix-system-explorer` agent with the full prompt (Phase 3A).
 - **> 3 significant systems**: Launch **parallel** `ix-system-explorer` agents, one per system (Phase 3B).
 
-## Phase 3A — Single agent (small codebase)
+## Phase 3A — Single agent (--deep, small codebase)
 
 **You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-system-explorer"` here. Do NOT do this work yourself. Launch one agent with:
 
-> Build a **detailed** architectural mental model of: $ARGUMENTS
+> Build a **detailed** architectural mental model of: $TARGET
 >
 > If no target is specified, explore the whole repo.
 >
@@ -61,7 +123,7 @@ Count the number of **significant top-level systems** (file count >= 10 or confi
 
 Then present the agent's output directly to the user.
 
-## Phase 3B — Parallel agents (large codebase)
+## Phase 3B — Parallel agents (--deep, large codebase)
 
 **You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-system-explorer"` for each system. Launch **ALL agents in a single message** (this runs them in parallel). Do NOT use `run_in_background`. You must wait for all agents to return before proceeding to Phase 4. Each agent gets:
 
@@ -126,7 +188,7 @@ Include one additional **ix-system-explorer** agent in the same single message f
 >
 > **Label every claim as [graph] or [inferred].**
 
-## Phase 4 — Synthesize
+## Phase 4 — Synthesize (--deep only)
 
 **Do NOT proceed until ALL agents from Phase 3 have returned their results.** Once all agents complete, **you** (not an agent) assemble the final document:
 

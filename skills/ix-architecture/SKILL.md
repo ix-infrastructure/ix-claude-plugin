@@ -1,7 +1,7 @@
 ---
 name: ix-architecture
 description: Analyze system design — structure, coupling, code smells, and high-risk hotspots. Purely graph-based, no code reads.
-argument-hint: [optional scope — path, subsystem name, or empty for whole system]
+argument-hint: [path or subsystem name — empty for whole repo]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
