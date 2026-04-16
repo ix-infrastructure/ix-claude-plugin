@@ -112,6 +112,26 @@ assert_structured() {
   pass "${_name}"
 }
 
+# Assert exit 0, valid JSON with systemMessage containing a given substring.
+assert_system_message() {
+  local _name="$1" _needle="$2"
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"; return
+  fi
+  if [ -z "${_OUT}" ]; then
+    fail "${_name}" "expected JSON output, got nothing"; return
+  fi
+  if ! echo "${_OUT}" | jq -e '.systemMessage' >/dev/null 2>&1; then
+    fail "${_name}" "missing systemMessage — output: ${_OUT:0:100}"; return
+  fi
+  local _msg
+  _msg=$(echo "${_OUT}" | jq -r '.systemMessage // empty' 2>/dev/null || true)
+  if [[ "${_msg}" != *"${_needle}"* ]]; then
+    fail "${_name}" "systemMessage missing '${_needle}' — got: ${_msg:0:140}"; return
+  fi
+  pass "${_name}"
+}
+
 # ── Minimal "no-tool" fixture (causes hooks to exit early with no output) ─────
 _EMPTY_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
 printf '{"tool_name": "", "tool_input": {}, "cwd": "/repo"}' > "${_EMPTY_FIXTURE}"
@@ -268,6 +288,43 @@ assert_empty "bash/ix failure degrades gracefully"
 # Structured output format
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_HOOK_OUTPUT_STYLE=structured
 assert_structured "bash/structured output mode"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-annotate.sh — Stop hook attribution
+# ═════════════════════════════════════════════════════════════════════════════
+section "ix-annotate.sh"
+
+_annotate_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_annotate_home="${_annotate_tmp}/home"
+mkdir -p "${_annotate_home}"
+_STOP_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '{"session_id":"test-session-001"}' > "${_STOP_FIXTURE}"
+
+_seed_rc=0
+env \
+  HOME="${_annotate_home}" \
+  TMPDIR="${_annotate_tmp}" \
+  IX_HEALTH_CACHE="${_annotate_tmp}/ix-healthy" \
+  IX_MAP_LOCK_PATH="${_annotate_tmp}/ix-map.lock" \
+  IX_LEDGER_MODE="on" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" >/dev/null 2>/dev/null || _seed_rc=$?
+
+if [ "${_seed_rc}" -ne 0 ]; then
+  fail "annotate/seed ledger" "expected intercept hook to succeed, got ${_seed_rc}"
+else
+  _RC=0
+  _OUT=$(env \
+    HOME="${_annotate_home}" \
+    TMPDIR="${_annotate_tmp}" \
+    IX_LEDGER_MODE="on" \
+    IX_ERROR_MODE="off" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+  assert_system_message "annotate/stop hook emits ix summary" "ix uses the code graph and session context"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix not in PATH — one-time systemMessage notification

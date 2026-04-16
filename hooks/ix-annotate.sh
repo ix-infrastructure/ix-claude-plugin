@@ -2,7 +2,7 @@
 # ix-annotate.sh — Stop hook (synchronous)
 #
 # Fires after Claude finishes each response. Reads the per-turn ledger written
-# by all PreToolUse hooks and emits a one-sentence summary of what ix did.
+# by all relevant hooks and emits a short attribution summary of what ix did.
 #
 # Runs synchronously so the systemMessage appears before the session ends.
 # Fast — no ix commands, just reads the local JSONL ledger file.
@@ -12,6 +12,8 @@
 set -euo pipefail
 
 [ "${IX_ANNOTATE_MODE:-brief}" != "off" ] || exit 0
+
+INPUT=$(cat)
 
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh" 2>/dev/null || true
@@ -81,8 +83,8 @@ _brief_from_records() {
 
   [ "${#_parts[@]}" -gt 0 ] || return 0
 
-  # Join parts into one sentence
-  local _out="ix: " _i
+  # Explain ix first, then describe what it did this turn.
+  local _out="ix uses the code graph and session context to surface structure, risk, and relevant symbols before Claude searches, reads, or edits. This turn it " _i
   for (( _i=0; _i<${#_parts[@]}; _i++ )); do
     if [ "$_i" -eq 0 ]; then
       _out+="${_parts[$_i]}"
@@ -92,12 +94,13 @@ _brief_from_records() {
       _out+=", ${_parts[$_i]}"
     fi
   done
+  _out+="."
   printf '%s' "$_out"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-_records=$(ix_ledger_last_turn 2>/dev/null || true)
+_records=$(ix_ledger_last_turn "${INPUT:-}" 2>/dev/null || true)
 _attr=$(_brief_from_records "${_records:-}")
 [ -n "${_attr:-}" ] || exit 0
 

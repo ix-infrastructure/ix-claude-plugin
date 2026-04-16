@@ -10,6 +10,7 @@
 set -euo pipefail
 
 BRIEFING_TTL=600  # 10 minutes
+INPUT=$(cat)
 
 # Bail silently if ix is not in PATH
 # ── Shared library ────────────────────────────────────────────────────────────
