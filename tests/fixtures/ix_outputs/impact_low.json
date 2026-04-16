@@ -1,0 +1,10 @@
+{
+  "riskLevel": "low",
+  "riskSummary": "Leaf utility with no dependents.",
+  "summary": {
+    "directDependents": 0,
+    "memberLevelCallers": 1
+  },
+  "topImpactedMembers": [],
+  "nextStep": ""
+}

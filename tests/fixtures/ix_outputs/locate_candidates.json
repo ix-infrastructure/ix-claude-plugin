@@ -1,0 +1,8 @@
+{
+  "candidates": [
+    {"name": "AuthService",     "kind": "class"},
+    {"name": "AuthServiceV2",   "kind": "class"},
+    {"name": "AuthServiceMock", "kind": "class"}
+  ],
+  "confidence": 0.7
+}

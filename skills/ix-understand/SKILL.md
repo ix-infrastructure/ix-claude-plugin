@@ -1,7 +1,7 @@
 ---
 name: ix-understand
 description: Build a detailed architectural mental model of a system, subsystem, or the whole repo. Graph-first, source reads only when needed for data flow or key patterns.
-argument-hint: [target] [--shallow (default) | --medium | --deep]
+argument-hint: [target] [--shallow (default) | --medium | --deep] [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -15,6 +15,7 @@ Parse `$ARGUMENTS` before doing anything else:
 - `--shallow`: orient only, no agents (default if no flag given)
 - `--medium`: single agent regardless of system count
 - `--deep`: full parallel agent strategy
+- `--save [path]`: if present, set `SAVE_PATH`; path is optional — if absent, auto-generate `ix-understand-<target-slug>.md` in cwd (target slug = `TARGET` with spaces and slashes replaced by `-`, or `repo` if TARGET is empty); if `--save` is not given at all, `SAVE_PATH` is empty.
 
 **MANDATORY for `--medium` and `--deep`: This skill MUST use the Agent tool (subagent_type: "ix-memory:ix-system-explorer") for all exploration work. Do NOT run ix commands yourself except for the Phase 1 orient commands below. All subsystem exploration MUST be delegated to agents.**
 
@@ -248,3 +249,10 @@ Include one additional **ix-system-explorer** agent in the same single message f
 ```
 
 **Quality bar:** The final document must be comprehensive (all systems covered), specific (file paths, counts), structured (tables, ASCII diagrams), actionable (navigation shortcuts), and evidenced ([graph] or [inferred] labels).
+
+## Save step
+
+**Only if `SAVE_PATH` is non-empty (i.e., `--save` was passed):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

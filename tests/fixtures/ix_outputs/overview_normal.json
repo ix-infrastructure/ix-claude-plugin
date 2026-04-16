@@ -1,0 +1,17 @@
+{
+  "name": "auth.ts",
+  "kind": "file",
+  "confidence": 0.9,
+  "keyItems": [
+    {"name": "AuthService",   "kind": "class"},
+    {"name": "login",         "kind": "function"},
+    {"name": "logout",        "kind": "function"},
+    {"name": "AuthConfig",    "kind": "interface"},
+    {"name": "validateToken", "kind": "function"}
+  ],
+  "childrenByKind": {
+    "class": 1,
+    "function": 3,
+    "interface": 1
+  }
+}

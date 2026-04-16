@@ -13,13 +13,13 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 
 # Bail silently if ix is not in PATH
-command -v ix >/dev/null 2>&1 || exit 0
-
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
+
+IX_INGEST_INJECT="${IX_INGEST_INJECT:-off}"
 
 # ── Map file (retry once on failure) ─────────────────────────────────────────
 _map_err=$(mktemp)
@@ -35,7 +35,12 @@ ix map "$FILE_PATH" >/dev/null 2>"$_map_err" || {
 }
 rm -f "$_map_err"
 
-jq -n --arg fp "$FILE_PATH" \
-  '{"additionalContext": ("[ix] Graph updated — mapped: " + $fp)}'
+if [ "$IX_INGEST_INJECT" = "on" ]; then
+  jq -n --arg fp "$FILE_PATH" \
+    '{"additionalContext": ("[ix] Graph updated — mapped: " + $fp)}'
+elif [ "$IX_INGEST_INJECT" = "debug-only" ]; then
+  ix_capture_async "ix" "ix-ingest" "mapped: $FILE_PATH" "0" "ix map $FILE_PATH" ""
+fi
+# Default (off): silent success — no injection, no log
 
 exit 0

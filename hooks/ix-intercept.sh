@@ -17,19 +17,21 @@ INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 [ -z "$TOOL" ] && exit 0
 
-command -v ix >/dev/null 2>&1 || exit 0
-
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
+_t0=$(date +%s%3N 2>/dev/null || echo 0)
 
 # ── Grep: text/symbol search ──────────────────────────────────────────────────
 if [ "$TOOL" = "Grep" ]; then
   PATTERN=$(echo "$INPUT" | jq -r '.tool_input.pattern // empty')
   [ -z "$PATTERN" ] && exit 0
   [ ${#PATTERN} -lt 3 ] && exit 0
+  if [ "${IX_SKIP_SECRET_PATTERNS:-1}" = "1" ] && ix_looks_like_secret "$PATTERN"; then
+    exit 0
+  fi
 
   PATH_ARG=$(echo "$INPUT" | jq -r '.tool_input.path // empty')
   LANG_ARG=$(echo "$INPUT" | jq -r '.tool_input.type // empty')
@@ -47,11 +49,8 @@ if [ "$TOOL" = "Grep" ]; then
     _LOC_JSON=$(parse_json "$_LOC_RAW")
     if [ -n "$_LOC_JSON" ]; then
       _confidence=$(echo "$_LOC_JSON" | jq -r '(.confidence // (.resolvedTarget.confidence // 1)) | tostring' 2>/dev/null || echo "1")
-      if awk "BEGIN {c=${_confidence}+0; exit !(c < 0.3)}"; then
-        LOC_PART=""  # confidence too low — drop symbol data, keep text hits
-      elif awk "BEGIN {c=${_confidence}+0; exit !(c < 0.6)}"; then
-        CONF_WARN="⚠ Graph confidence low (${_confidence}) — treat structural data as approximate"
-      fi
+      ix_confidence_gate "${_confidence:-1}"
+      [ "$CONF_GATE" = "drop" ] && { LOC_PART=""; }
     fi
   fi
 
@@ -101,5 +100,22 @@ fi
 
 [ -z "${CONTEXT:-}" ] && exit 0
 
-jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
+_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+if [ "$TOOL" = "Grep" ]; then
+  ix_ledger_append "PreToolUse" "Grep" "${#CONTEXT}" "text,locate" "${_confidence:-1}" "" "$_elapsed_ms"
+else
+  ix_ledger_append "PreToolUse" "Glob" "${#CONTEXT}" "inventory" "1" "" "$_elapsed_ms"
+fi
+
+if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
+  jq -n --arg ctx "$CONTEXT" '{
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "allow",
+      "additionalContext": $ctx
+    }
+  }'
+else
+  jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
+fi
 exit 0

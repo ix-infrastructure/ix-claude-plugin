@@ -1,10 +1,17 @@
 ---
 name: ix-architecture
 description: Analyze system design — structure, coupling, code smells, and high-risk hotspots. Purely graph-based, no code reads.
-argument-hint: [path or subsystem name — empty for whole repo]
+argument-hint: [path or subsystem name — empty for whole repo] [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before processing the scope.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-architecture-<scope-slug>.md` in cwd (scope slug = `$ARGUMENTS` with spaces and slashes replaced by `-`, or `repo` if arguments are empty).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Health gate
 
@@ -113,3 +120,10 @@ If Pro is available, after the report (inline or delegated) is complete:
 ix decisions --format json
 ```
 Append a **Recorded Decisions** section cross-referencing relevant design decisions against the findings — especially decisions that affect god-modules, high-coupling regions, or identified hotspots.
+
+## Save step
+
+**Only if `SAVE_PATH` is non-empty (i.e., `--save` was passed):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

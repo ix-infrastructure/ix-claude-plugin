@@ -1,12 +1,19 @@
 ---
 name: ix-debug
 description: Root cause analysis — trace execution path to a failure, narrow candidates, read minimal source only at suspected failure points.
-argument-hint: <error message, symptom description, or name of failing function>
+argument-hint: <error message, symptom description, or name of failing function> [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, use Grep + Read as fallback.
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before resolving the entry point.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-debug-<target-slug>.md` in cwd (target slug = the first symbol or first three words of the symptom with spaces and slashes replaced by `-`).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Pro check (optional)
 
@@ -144,3 +151,8 @@ ix bug create "<symptom title>" --severity <low|medium|high|critical> --affects 
 ```
 (Omit if Pro unavailable or bug already tracked.)
 ```
+
+**Save step (only if `SAVE_PATH` is non-empty):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

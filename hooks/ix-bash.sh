@@ -18,13 +18,12 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # Only intercept grep/rg invocations
 echo "$COMMAND" | grep -qE '^\s*(grep|rg)\s' || exit 0
 
-command -v ix >/dev/null 2>&1 || exit 0
-
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
+_t0=$(date +%s%3N 2>/dev/null || echo 0)
 
 # ── Extract search pattern from command ────────────────────────────────────────
 PATTERN=""
@@ -38,6 +37,9 @@ fi
 
 [ -z "$PATTERN" ] && exit 0
 [ ${#PATTERN} -lt 3 ] && exit 0
+if [ "${IX_SKIP_SECRET_PATTERNS:-1}" = "1" ] && ix_looks_like_secret "$PATTERN"; then
+  exit 0
+fi
 
 # ── Run ix text + ix locate in parallel ───────────────────────────────────────
 ix_run_text_locate "$PATTERN"
@@ -55,5 +57,18 @@ CONTEXT="[ix] bash grep intercepted for '${PATTERN}'"
 [ -n "$TEXT_PART" ] && CONTEXT="${CONTEXT} | ${TEXT_PART}"
 CONTEXT="${CONTEXT} | Prefer: ix text '${PATTERN}' or ix locate '${PATTERN}' over shell grep"
 
-jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
+_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+ix_ledger_append "PreToolUse" "Bash" "${#CONTEXT}" "text,locate" "1" "" "$_elapsed_ms"
+
+if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
+  jq -n --arg ctx "$CONTEXT" '{
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "allow",
+      "additionalContext": $ctx
+    }
+  }'
+else
+  jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
+fi
 exit 0

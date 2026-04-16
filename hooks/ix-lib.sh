@@ -9,9 +9,11 @@
 # Exports:
 #   IX_HEALTH_CACHE         — path to the health-check TTL file
 #   IX_PRO_CACHE            — path to the pro-check cache file
-#   ix_health_check         — check ix is running (exits caller on failure)
+#   ix_health_check         — validate ix availability, emit one-time notice if missing
 #   ix_check_pro            — check ix pro is available (exits caller if not); call after ix_health_check
 #   parse_json              — strip ix header noise, extract first JSON value
+#   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
+#   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
 #   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
 #   ix_summarize_locate     — summarise locate results → LOC_PART
@@ -19,11 +21,36 @@
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 IX_PRO_CACHE="${TMPDIR:-/tmp}/ix-pro"
 
+# ── Portable hash helper ──────────────────────────────────────────────────────
+# Usage: hash_string "some string"
+# Writes a lowercase hex digest to stdout. Tries md5sum (Linux), md5 -q (macOS),
+# shasum -a 256, then Python 3 as a final fallback.
+hash_string() {
+  local _input="$1" _out
+  if _out=$(printf '%s' "$_input" | md5sum 2>/dev/null) && [ -n "$_out" ]; then
+    printf '%s\n' "${_out%% *}"
+  elif _out=$(printf '%s' "$_input" | md5 -q 2>/dev/null) && [ -n "$_out" ]; then
+    printf '%s\n' "$_out"
+  elif _out=$(printf '%s' "$_input" | shasum -a 256 2>/dev/null) && [ -n "$_out" ]; then
+    printf '%s\n' "${_out%% *}"
+  else
+    python3 -c "import hashlib,sys; print(hashlib.md5(sys.argv[1].encode()).hexdigest())" "$_input"
+  fi
+}
+
 # ── Health check (no ix status — commands fail fast on their own) ─────────────
 # Keeps a 300s TTL cache so ix_check_pro can schedule re-checks without
 # calling ix status (which takes 6s+ and would reliably timeout 10s hooks).
 ix_health_check() {
-  local _now _cached
+  local _now _cached _ix_notify_file
+  if ! command -v ix >/dev/null 2>&1; then
+    _ix_notify_file="${TMPDIR:-/tmp}/ix-unavailable-notified"
+    if [ ! -f "$_ix_notify_file" ]; then
+      : > "$_ix_notify_file" 2>/dev/null || true
+      jq -cn '{"systemMessage": "ix not found — hooks are inactive. Install ix from https://ix.infrastructure or run: npm i -g @ix/cli"}'
+    fi
+    exit 0
+  fi
   _now=$(date +%s)
   if [ -f "$IX_HEALTH_CACHE" ]; then
     _cached=$(cat "$IX_HEALTH_CACHE" 2>/dev/null || echo 0)
@@ -71,9 +98,17 @@ ix_run_text_locate() {
   _TEXT_PID=$!
 
   _is_plain=1
-  # Two grep passes to avoid the ERE ']' bracket-close bug and '{}'  quantifier error
-  if printf '%s\n' "$_pattern" | grep -qE '[*+?^$.|\\]' || \
-     printf '%s\n' "$_pattern" | grep -qE '[][(){}]'; then
+  # Length guard: patterns shorter than 2 chars are too ambiguous for locate
+  [ "${#_pattern}" -lt 2 ] && _is_plain=0
+  # Block locate only for patterns that look like actual regex metacharacters:
+  #   quantifiers: * + ?
+  #   character classes: [ ]
+  #   groups: ( )
+  #   escape sequences: \d \w \s etc. (\\ followed by a word char)
+  #   quantifier braces with digit/comma: {N} or {N,M}
+  # Allowed: . _ - / : (all valid in qualified symbol names like module.method or config.ts)
+  if [ "$_is_plain" -eq 1 ] && \
+     printf '%s\n' "$_pattern" | grep -qE '[*+?]|[][()]|\\\w|\{[0-9]'; then
     _is_plain=0
   fi
   _LOC_PID=""
@@ -112,6 +147,43 @@ ix_summarize_text() {
     [ "$_more" -gt 0 ] && TEXT_PART="${TEXT_PART} (+${_more} more)"
   fi
   return 0
+}
+
+# ── Confidence gate ───────────────────────────────────────────────────────────
+# Usage: ix_confidence_gate <confidence_value>
+# Sets globals: CONF_GATE ("drop" | "warn" | "ok") and CONF_WARN (string, empty if ok/drop)
+# Callers check CONF_GATE:
+#   "drop" → discard structural data or skip injection entirely
+#   "warn" → include CONF_WARN in context output
+#   "ok"   → proceed normally
+ix_confidence_gate() {
+  local _c="$1"
+  CONF_GATE="ok"
+  CONF_WARN=""
+  if awk "BEGIN {c=${_c}+0; exit !(c < 0.3)}"; then
+    CONF_GATE="drop"
+  elif awk "BEGIN {c=${_c}+0; exit !(c < 0.6)}"; then
+    CONF_GATE="warn"
+    CONF_WARN="⚠ Graph confidence low (${_c}) — treat structural data as approximate"
+  fi
+}
+
+# ── Secret / high-entropy pattern detector ───────────────────────────────────
+# Usage: ix_looks_like_secret <pattern>
+# Returns 0 (true) if the pattern looks like a secret or API token; 1 otherwise.
+# Used to silently skip injection/logging when a search pattern is a credential.
+ix_looks_like_secret() {
+  local _p="$1"
+  # Known secret prefixes (OpenAI, GitHub, GitLab, Bearer tokens, JWTs)
+  printf '%s\n' "$_p" | grep -qE '^(sk-|ghp_|ghs_|glpat-|Bearer |eyJ)' && return 0
+  # Long high-entropy token (>= 32 chars, mostly base64/hex alphabet)
+  local _len="${#_p}"
+  if [ "$_len" -ge 32 ]; then
+    local _alnum
+    _alnum=$(printf '%s' "$_p" | tr -cd 'A-Za-z0-9+/=_-' | wc -c | tr -d ' ')
+    awk "BEGIN { exit !($_alnum / $_len > 0.90) }" && return 0
+  fi
+  return 1
 }
 
 # ── Summarise ix locate results ───────────────────────────────────────────────

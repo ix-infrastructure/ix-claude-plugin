@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# ix-ledger.sh — Per-turn attribution ledger
+#
+# Sourced by ix hooks via lib/index.sh. Provides two public functions:
+#
+#   ix_ledger_append  — called by each hook after building its context string
+#   ix_ledger_last_turn — called by Stop hook to read current turn's records
+#
+# Records are written to:
+#   ~/.local/share/ix/plugin/ledger/ledger.jsonl
+#
+# Config (env-overridable):
+#   IX_LEDGER_MODE   off | on  (default: on)
+
+IX_LEDGER_STORE="${HOME}/.local/share/ix/plugin/ledger"
+IX_LEDGER_FILE="${IX_LEDGER_STORE}/ledger.jsonl"
+
+# turn_id: shared across all hook events within one Claude response.
+# $PPID is the Claude Code process — stable for the duration of one turn.
+_IX_TURN_ID="${PPID:-0}"
+
+_ix_ledger_mkdir() { mkdir -p "${IX_LEDGER_STORE}" 2>/dev/null; }
+
+# ── Public: append one record to the ledger ───────────────────────────────────
+# Usage: ix_ledger_append <hook_event> <tool> <ctx_chars> <ix_cmds> <conf> <risk> <ms>
+#   hook_event : PreToolUse | PostToolUse | UserPromptSubmit | Stop
+#   tool       : Grep | Glob | Read | Edit | Write | Bash | Briefing | …
+#   ctx_chars  : length of injected context string (integer)
+#   ix_cmds    : comma-separated list of ix commands run (e.g. "text,locate")
+#   conf       : confidence value (float string, e.g. "0.85"), or "" / "1"
+#   risk       : risk level from ix impact (high | medium | low | critical | "")
+#   ms         : elapsed milliseconds (integer), or "0" if unavailable
+ix_ledger_append() {
+  [ "${IX_LEDGER_MODE:-on}" = "off" ] && return 0
+
+  local _event="${1:-}"  _tool="${2:-}"  _chars="${3:-0}" \
+        _cmds="${4:-}"   _conf="${5:-1}" _risk="${6:-}"   _ms="${7:-0}"
+  [ -z "$_event" ] && return 0
+
+  (
+    set +e
+    _ix_ledger_mkdir
+    local _ts
+    _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    jq -cn \
+      --arg  ts       "$_ts"          \
+      --arg  turn_id  "$_IX_TURN_ID"  \
+      --arg  event    "$_event"       \
+      --arg  tool     "$_tool"        \
+      --argjson chars "${_chars:-0}"  \
+      --arg  cmds     "$_cmds"        \
+      --arg  conf     "$_conf"        \
+      --arg  risk     "$_risk"        \
+      --argjson ms    "${_ms:-0}"     \
+      '{ts:$ts, turn_id:$turn_id, hook_event:$event, tool:$tool,
+        ctx_chars:$chars, ix_cmds:($cmds|split(",")|map(select(length>0))),
+        conf:$conf, risk:$risk, ms:$ms}' \
+      >> "$IX_LEDGER_FILE" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+# ── Public: return JSON array of current turn's ledger records ────────────────
+# Usage: RECORDS=$(ix_ledger_last_turn)
+# Returns empty string if ledger file missing or no records for this turn.
+ix_ledger_last_turn() {
+  [ ! -f "$IX_LEDGER_FILE" ] && return 0
+
+  # Read last 200 lines (one turn rarely exceeds a handful of hook events)
+  # and filter to those matching the current turn_id.
+  local _tid="$_IX_TURN_ID"
+  tail -200 "$IX_LEDGER_FILE" 2>/dev/null \
+    | jq -sc --arg tid "$_tid" '[.[] | select(.turn_id == $tid)]' 2>/dev/null \
+    || echo ""
+}

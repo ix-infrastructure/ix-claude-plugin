@@ -1,0 +1,9 @@
+{
+  "resolvedTarget": {
+    "name": "AuthService",
+    "kind": "class",
+    "path": "src/auth.ts",
+    "confidence": 0.95
+  },
+  "confidence": 0.95
+}

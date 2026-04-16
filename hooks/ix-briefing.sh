@@ -12,8 +12,6 @@ set -euo pipefail
 BRIEFING_TTL=600  # 10 minutes
 
 # Bail silently if ix is not in PATH
-command -v ix >/dev/null 2>&1 || exit 0
-
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
@@ -31,6 +29,7 @@ fi
 
 # ── Health + pro check ────────────────────────────────────────────────────────
 ix_health_check
+_t0=$(date +%s%3N 2>/dev/null || echo 0)
 ix_check_pro
 
 _bfr_err=$(mktemp)
@@ -46,6 +45,24 @@ rm -f "$_bfr_err"
 
 { echo "$_now"; echo "$BRIEFING"; } > "$IX_BRIEFING_CACHE"
 
-jq -n --arg b "$BRIEFING" \
-  '{"additionalContext": ("[ix] Session briefing:\n" + $b)}'
+_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+
+# ── Model-suffix attribution instruction (C5) ─────────────────────────────────
+_channel="${IX_ANNOTATE_CHANNEL:-systemMessage}"
+_mode="${IX_ANNOTATE_MODE:-off}"
+_SUFFIX_CACHE="${TMPDIR:-/tmp}/ix-model-suffix-instructed"
+_suffix_instruction=""
+if [ "$_mode" != "off" ] && { [ "$_channel" = "modelSuffix" ] || [ "$_channel" = "both" ]; }; then
+  if [ ! -f "$_SUFFIX_CACHE" ]; then
+    touch "$_SUFFIX_CACHE"
+    _suffix_instruction="[ix meta] Attribution: if you received any lines starting with [ix] since the last user message, end your response with ⟦ix+:<codes>⟧ where codes are: B=briefing, G=grep/glob, R=read, E=edit. Example: ⟦ix+:G R⟧"
+  fi
+fi
+
+_context="[ix] Session briefing:\n${BRIEFING}"
+[ -n "$_suffix_instruction" ] && _context="${_context}\n${_suffix_instruction}"
+
+ix_ledger_append "UserPromptSubmit" "Briefing" "${#_context}" "briefing" "1" "" "$_elapsed_ms"
+
+jq -n --arg ctx "$_context" '{"additionalContext": $ctx}'
 exit 0

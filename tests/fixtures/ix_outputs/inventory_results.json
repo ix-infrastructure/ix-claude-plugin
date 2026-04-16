@@ -1,0 +1,14 @@
+{
+  "summary": {
+    "total": 7
+  },
+  "results": [
+    {"name": "AuthService",    "kind": "class"},
+    {"name": "login",          "kind": "function"},
+    {"name": "logout",         "kind": "function"},
+    {"name": "validateToken",  "kind": "function"},
+    {"name": "AuthConfig",     "kind": "interface"},
+    {"name": "authMiddleware",  "kind": "function"},
+    {"name": "TokenPayload",   "kind": "type"}
+  ]
+}
