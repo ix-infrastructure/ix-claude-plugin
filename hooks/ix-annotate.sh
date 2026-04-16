@@ -11,10 +11,10 @@
 
 set -euo pipefail
 
+[ "${IX_ANNOTATE_MODE:-brief}" != "off" ] || exit 0
+
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh" 2>/dev/null || true
-
-[ "${IX_ANNOTATE_MODE:-brief}" != "off" ] || exit 0
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
