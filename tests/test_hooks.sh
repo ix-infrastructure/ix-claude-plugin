@@ -514,7 +514,7 @@ else
     IX_ERROR_MODE="off" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
-  assert_system_message "annotate/stop hook emits ix summary" "ix uses the code graph and session context"
+  assert_system_message "annotate/stop hook emits ix summary" "Ix helped by surfacing a relevant symbol before search."
 
   _RC=0
   _OUT=$(env \
@@ -528,6 +528,29 @@ else
     bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
   assert_empty "annotate/modelSuffix mode stays silent"
 fi
+
+_annotate_missing_ledger_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_annotate_missing_ledger_home="${_annotate_missing_ledger_tmp}/home"
+mkdir -p "${_annotate_missing_ledger_home}"
+_annotate_missing_ledger_lib="${_annotate_missing_ledger_tmp}/index.sh"
+cat > "${_annotate_missing_ledger_lib}" <<EOF
+#!/usr/bin/env bash
+source "${HOOKS_DIR}/ix-errors.sh" 2>/dev/null || true
+source "${HOOKS_DIR}/ix-lib.sh"
+EOF
+
+_RC=0
+_OUT=$(env \
+  HOME="${_annotate_missing_ledger_home}" \
+  TMPDIR="${_annotate_missing_ledger_tmp}" \
+  IX_ANNOTATE_MODE="brief" \
+  IX_ANNOTATE_CHANNEL="systemMessage" \
+  IX_LEDGER_MODE="on" \
+  IX_ERROR_MODE="off" \
+  IX_HOOK_LIB_INDEX="${_annotate_missing_ledger_lib}" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+assert_system_message "annotate/missing ledger helper emits fallback" "ledger helpers are missing"
 
 _annotate_edit_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _annotate_edit_home="${_annotate_edit_tmp}/home"
@@ -557,7 +580,7 @@ else
     IX_ERROR_MODE="off" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
-  assert_system_message "annotate/post-decision nudge after edits" "This turn included 1 edit(s); note what changed, why, and any follow-ups."
+  assert_system_message "annotate/post-decision nudge after edits" "prompting you to note what changed, why, and any follow-ups after 1 edit(s)."
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
