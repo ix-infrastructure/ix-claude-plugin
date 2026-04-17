@@ -15,7 +15,7 @@
 set -euo pipefail
 
 [ "${IX_ANNOTATE_MODE:-brief}" != "off" ] || exit 0
-case "${IX_ANNOTATE_CHANNEL:-modelSuffix}" in
+case "${IX_ANNOTATE_CHANNEL:-systemMessage}" in
   modelSuffix) exit 0 ;;
 esac
 
