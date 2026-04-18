@@ -371,7 +371,8 @@ assert_block_decision "intercept/glob pattern blocks" "Next: ix overview AuthSer
 
 # Glob with absolute repo path → normalize before inventory so ix can resolve it
 run_hook ix-intercept.sh "${FX_IN}/glob_path_absolute.json" \
-  IX_MOCK_EXPECT_INVENTORY_PATH="myrepo"
+  IX_MOCK_EXPECT_INVENTORY_PATH="myrepo" \
+  IX_MOCK_EXPECT_INVENTORY_KIND="file"
 assert_block_decision "intercept/glob absolute path normalized" "Next: ix overview AuthService"
 
 # Empty / no-tool input → exit 0, no output

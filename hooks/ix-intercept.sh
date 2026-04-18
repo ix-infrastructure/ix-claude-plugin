@@ -114,7 +114,7 @@ elif [ "$TOOL" = "Glob" ]; then
 
   INV_PATH=$(ix_normalize_path_for_ix "$PATH_ARG" "$CWD" 2>/dev/null || true)
   [ -z "$INV_PATH" ] && INV_PATH="$PATH_ARG"
-  INV_ARGS=("--format" "json" "--path" "$INV_PATH")
+  INV_ARGS=("--kind" "file" "--format" "json" "--path" "$INV_PATH")
 
   ix_log "RUN ix inventory raw_path='$PATH_ARG' normalized_path='$INV_PATH' cwd='${CWD:-${PWD:-}}'"
   _inv_err=$(mktemp)
