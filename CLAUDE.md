@@ -1,6 +1,6 @@
 # ix-claude-plugin
 
-This repo is the Claude Code plugin for [Ix Memory](https://github.com/ix-infrastructure/IX-Memory). When working in this repo, use `ix` commands to navigate it just like any other codebase.
+This repo is the Claude Code plugin for [Ix Memory](https://github.com/ix-infrastructure/Ix). When working in this repo, use `ix` commands to navigate it just like any other codebase.
 
 ---
 

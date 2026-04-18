@@ -1,6 +1,6 @@
 # ix-claude-plugin
 
-A Claude Code plugin that turns Claude into a **graph-reasoning engineering agent** using [Ix Memory](https://github.com/ix-infrastructure/IX-Memory) as its structured memory backend.
+A Claude Code plugin that turns Claude into a **graph-reasoning engineering agent** using [Ix Memory](https://github.com/ix-infrastructure/Ix) as its structured memory backend.
 
 Claude + Ix = reasoning engine + persistent code knowledge graph. Skills are cognitive abstractions (not CLI wrappers) that minimize token usage and maximize accuracy.
 
@@ -15,7 +15,7 @@ Restart Claude Code after installing.
 
 ## Requirements
 
-- [Ix Memory](https://github.com/ix-infrastructure/IX-Memory) installed and running (`ix status` returns ok)
+- [Ix Memory](https://github.com/ix-infrastructure/Ix) installed and running (`ix status` returns ok)
 - `jq` in PATH
 - `ripgrep` (`rg`) in PATH
 
