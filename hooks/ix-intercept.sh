@@ -74,7 +74,7 @@ if [ "$TOOL" = "Grep" ]; then
   [ -n "$TEXT_PART" ] && CONTEXT="${CONTEXT} | ${TEXT_PART}"
   CONTEXT="${CONTEXT} | Use ix explain/trace/impact for deeper analysis, ix read <symbol> for source"
   [ -n "$CONF_WARN" ] && CONTEXT="${CONF_WARN} | ${CONTEXT}"
-  if [ "$HOOK_MODE" != "block" ] && [ -n "$LOC_PART" ]; then
+  if [ "$HOOK_MODE" != "block" ] && { [ -n "$LOC_PART" ] || [ -n "$TEXT_PART" ]; }; then
     HOOK_MODE="augment"
   fi
 
