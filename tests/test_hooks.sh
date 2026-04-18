@@ -369,6 +369,11 @@ assert_additional_context "intercept/medium confidence candidates augment" "[ix 
 run_hook ix-intercept.sh "${FX_IN}/glob_path.json"
 assert_block_decision "intercept/glob pattern blocks" "Next: ix overview AuthService"
 
+# Glob with absolute repo path → normalize before inventory so ix can resolve it
+run_hook ix-intercept.sh "${FX_IN}/glob_path_absolute.json" \
+  IX_MOCK_EXPECT_INVENTORY_PATH="myrepo"
+assert_block_decision "intercept/glob absolute path normalized" "Next: ix overview AuthService"
+
 # Empty / no-tool input → exit 0, no output
 run_hook ix-intercept.sh "${_EMPTY_FIXTURE}"
 assert_empty "intercept/no-tool input"

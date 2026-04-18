@@ -11,6 +11,7 @@
 #   IX_MOCK_OVERVIEW_FILE  — path to fixture for `ix overview` (default: overview_normal.json)
 #   IX_MOCK_IMPACT_FILE    — path to fixture for `ix impact`   (default: impact_high.json)
 #   IX_MOCK_INVENTORY_FILE — path to fixture for `ix inventory`(default: inventory_results.json)
+#   IX_MOCK_EXPECT_INVENTORY_PATH — expected `--path` arg for `ix inventory`
 #   IX_MOCK_BRIEFING_FILE  — path to fixture for `ix briefing` (default: briefing.json)
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
 
@@ -38,6 +39,25 @@ case "$SUBCOMMAND" in
     cat "${IX_MOCK_IMPACT_FILE:-${FX}/impact_high.json}"
     ;;
   inventory)
+    if [ -n "${IX_MOCK_EXPECT_INVENTORY_PATH:-}" ]; then
+      _inventory_path=""
+      shift
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --path)
+            _inventory_path="${2:-}"
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+      if [ "${_inventory_path}" != "${IX_MOCK_EXPECT_INVENTORY_PATH}" ]; then
+        echo "mock-ix: expected inventory path '${IX_MOCK_EXPECT_INVENTORY_PATH}', got '${_inventory_path}'" >&2
+        exit 1
+      fi
+    fi
     cat "${IX_MOCK_INVENTORY_FILE:-${FX}/inventory_results.json}"
     ;;
   map)

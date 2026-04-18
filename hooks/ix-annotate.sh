@@ -1,35 +1,93 @@
 #!/usr/bin/env bash
-# ix-annotate.sh — UserPromptSubmit hook (synchronous)
+# ix-annotate.sh — synchronous attribution/nudge hook
 #
-# Fires at the start of each turn. Injects a standing instruction for Claude
-# to append a concise 'Ix:' note as the final line of its response whenever
-# the Ix Memory plugin provided context during the turn.
-#
-# Because the instruction arrives before the response, Claude writes the Ix:
-# line as part of its main response — not as a separate continuation.
-#
-# Set IX_ANNOTATE_MODE=off to silence.
+# Reads the current session's ix ledger records and emits a concise summary on
+# the configured channel. Model-suffix instruction handling lives in
+# ix-briefing.sh, so this hook stays silent for modelSuffix-only mode.
 
 set -euo pipefail
 
 INPUT=$(cat)
 [ -n "${INPUT:-}" ] || exit 0
 
-[ "${IX_ANNOTATE_MODE:-brief}" != "off" ] || exit 0
-
-_json_escape() {
-  printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'
-}
-
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${_HOOK_DIR}/lib/index.sh" 2>/dev/null || exit 0
+_HOOK_LIB_INDEX="${IX_HOOK_LIB_INDEX:-${_HOOK_DIR}/lib/index.sh}"
+source "${_HOOK_LIB_INDEX}" 2>/dev/null || exit 0
+
 IX_HOOK_NAME="ix-annotate"
+_mode="${IX_ANNOTATE_MODE:-brief}"
+_channel="${IX_ANNOTATE_CHANNEL:-modelSuffix}"
 
+[ "$_mode" != "off" ] || exit 0
 ix_health_check || { ix_log "SKIP ix not available"; exit 0; }
-ix_log "ENTRY mode=${IX_ANNOTATE_MODE:-brief}"
+ix_log "ENTRY mode=${_mode} channel=${_channel}"
 
-_instruction="If the Ix Memory plugin provided any [ix ...] context during this turn (visible in tool additionalContext), append a single 'Ix:' line at the very end of your response. One sentence, specific: what did Ix find, flag, or prevent, and why did it help? For example: what symbol was located, what blast radius was surfaced, or what grep scan was skipped. Only include the Ix: line if [ix] context actually appeared this turn — omit it entirely otherwise."
+case "$_channel" in
+  modelSuffix)
+    ix_log "SKIP modelSuffix handled by briefing hook"
+    exit 0
+    ;;
+  systemMessage|additionalContext|both)
+    ;;
+  *)
+    ix_log "SKIP unsupported channel=$_channel"
+    exit 0
+    ;;
+esac
 
-ix_log "DECISION injecting systemMessage (${#_instruction} chars)"
-printf '{"systemMessage":"%s"}\n' "$(_json_escape "$_instruction")"
+if ! declare -F ix_ledger_last_turn >/dev/null 2>&1; then
+  _fallback="Ix attribution unavailable: ledger helpers are missing."
+  ix_log "DECISION fallback missing ledger helper"
+  case "$_channel" in
+    systemMessage)
+      jq -n --arg msg "$_fallback" '{"systemMessage": $msg}'
+      ;;
+    additionalContext)
+      jq -n --arg ctx "$_fallback" '{"additionalContext": $ctx}'
+      ;;
+    both)
+      jq -n --arg msg "$_fallback" '{"systemMessage": $msg, "additionalContext": $msg}'
+      ;;
+  esac
+  exit 0
+fi
+
+_records=$(ix_ledger_last_turn "$INPUT")
+[ -n "${_records:-}" ] || { ix_log "SKIP no ledger records"; exit 0; }
+[ "$_records" != "[]" ] || { ix_log "SKIP empty ledger records"; exit 0; }
+
+_grep_count=$(printf '%s\n' "$_records" | jq '[.[] | select(.tool == "Grep" or .tool == "Glob" or .tool == "Bash")] | length' 2>/dev/null || echo 0)
+_read_count=$(printf '%s\n' "$_records" | jq '[.[] | select(.tool == "Read")] | length' 2>/dev/null || echo 0)
+_edit_count=$(printf '%s\n' "$_records" | jq '[.[] | select(.tool == "Edit" or .tool == "Write" or .tool == "MultiEdit")] | length' 2>/dev/null || echo 0)
+_briefing_count=$(printf '%s\n' "$_records" | jq '[.[] | select(.tool == "Briefing")] | length' 2>/dev/null || echo 0)
+
+_summary=""
+if [ "${_grep_count:-0}" -gt 0 ]; then
+  _summary="Ix helped by surfacing a relevant symbol before search."
+elif [ "${_read_count:-0}" -gt 0 ]; then
+  _summary="Ix helped by highlighting relevant file structure before reading."
+elif [ "${_edit_count:-0}" -gt 0 ]; then
+  _summary="Ix helped by flagging edit impact before changes were applied."
+elif [ "${_briefing_count:-0}" -gt 0 ]; then
+  _summary="Ix helped by refreshing the session context before work began."
+fi
+
+[ -n "$_summary" ] || { ix_log "SKIP no attributable ix activity"; exit 0; }
+
+if [ "${_edit_count:-0}" -gt 0 ]; then
+  _summary="${_summary} Ix also helped by prompting you to note what changed, why, and any follow-ups after ${_edit_count} edit(s)."
+fi
+
+ix_log "DECISION emit summary chars=${#_summary}"
+case "$_channel" in
+  systemMessage)
+    jq -n --arg msg "$_summary" '{"systemMessage": $msg}'
+    ;;
+  additionalContext)
+    jq -n --arg ctx "$_summary" '{"additionalContext": $ctx}'
+    ;;
+  both)
+    jq -n --arg msg "$_summary" '{"systemMessage": $msg, "additionalContext": $msg}'
+    ;;
+esac
 exit 0

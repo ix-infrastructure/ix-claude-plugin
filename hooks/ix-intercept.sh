@@ -16,6 +16,7 @@ set -euo pipefail
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 [ -z "$TOOL" ] && exit 0
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,7 +66,11 @@ if [ "$TOOL" = "Grep" ]; then
     if [ -n "$_LOC_JSON" ]; then
       _confidence=$(echo "$_LOC_JSON" | jq -r '(.confidence // (.resolvedTarget.confidence // 1)) | tostring' 2>/dev/null || echo "1")
       ix_confidence_gate "${_confidence:-1}"
-      [ "$CONF_GATE" = "drop" ] && { LOC_PART=""; }
+      if [ "$CONF_GATE" = "drop" ]; then
+        LOC_PART=""
+        TEXT_PART=""
+        ix_log "CONFIDENCE gate=drop conf=${_confidence:-?} → suppressing ix injection"
+      fi
       _loc_type=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.type // .resolvedTarget.kind // "unknown"' 2>/dev/null || echo "")
       _loc_name=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.name // ""' 2>/dev/null || echo "")
       _loc_path=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.path // ""' 2>/dev/null || echo "")
@@ -107,14 +112,16 @@ elif [ "$TOOL" = "Glob" ]; then
   ix_log "GLOB intent=$GLOB_INTENT"
   [ "$GLOB_INTENT" = "literal" ] && { ix_log "SKIP literal glob pattern"; exit 0; }
 
-  INV_ARGS=("--format" "json" "--path" "$PATH_ARG")
+  INV_PATH=$(ix_normalize_path_for_ix "$PATH_ARG" "$CWD" 2>/dev/null || true)
+  [ -z "$INV_PATH" ] && INV_PATH="$PATH_ARG"
+  INV_ARGS=("--format" "json" "--path" "$INV_PATH")
 
-  ix_log "RUN ix inventory path='$PATH_ARG'"
+  ix_log "RUN ix inventory raw_path='$PATH_ARG' normalized_path='$INV_PATH' cwd='${CWD:-${PWD:-}}'"
   _inv_err=$(mktemp)
   INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || {
     _exit=$?
     ix_capture_async "ix" "ix-inventory" "inventory failed" "$_exit" \
-      "ix inventory '$PATH_ARG'" "$(head -3 "$_inv_err")"
+      "ix inventory '$INV_PATH' (from '$PATH_ARG')" "$(head -3 "$_inv_err")"
     ix_log "FAILED ix inventory exit=$_exit"
     rm -f "$_inv_err"
     exit 0

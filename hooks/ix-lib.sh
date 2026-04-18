@@ -11,6 +11,7 @@
 #   IX_PRO_CACHE            — path to the pro-check cache file
 #   ix_health_check         — validate ix availability, emit one-time notice if missing
 #   ix_check_pro            — check ix pro is available; returns 0/1 after ix_health_check
+#   ix_normalize_path_for_ix — convert absolute hook paths into ix-usable relative scopes
 #   parse_json              — strip ix header noise, extract first JSON value
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
 #   ix_hook_decide          — emit block/augment/allow output in legacy or structured format
@@ -76,6 +77,40 @@ ix_check_pro() {
   fi
   _pro_val=$(cat "$IX_PRO_CACHE" 2>/dev/null || echo "0")
   [ "$_pro_val" = "1" ]
+}
+
+# ── Path normalizer for ix path-scoped commands ──────────────────────────────
+# Usage: ix_normalize_path_for_ix PATH [CWD]
+# Converts absolute hook paths into a relative scope that ix can resolve.
+# Strategy:
+#   - Relative paths pass through unchanged.
+#   - Absolute paths walk up from CWD (or $PWD) until the path has a matching
+#     ancestor prefix with a non-empty suffix.
+#   - Falls back to basename if no usable relative scope can be derived.
+ix_normalize_path_for_ix() {
+  local _path="${1:-}" _cwd="${2:-${PWD:-}}" _base _rel
+  [ -z "$_path" ] && return 1
+
+  if [[ "$_path" != /* ]]; then
+    printf '%s\n' "$_path"
+    return 0
+  fi
+
+  _base="${_cwd:-${PWD:-}}"
+  while [ -n "$_base" ] && [ "$_base" != "/" ] && [ "$_base" != "." ]; do
+    case "$_path" in
+      "$_base"/*)
+        _rel="${_path#"${_base}/"}"
+        if [ -n "$_rel" ]; then
+          printf '%s\n' "$_rel"
+          return 0
+        fi
+        ;;
+    esac
+    _base=$(dirname "$_base")
+  done
+
+  basename "$_path"
 }
 
 # ── Helper: strip ix header noise, extract first JSON array/object ────────────
