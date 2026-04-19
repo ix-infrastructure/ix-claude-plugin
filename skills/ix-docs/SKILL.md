@@ -291,7 +291,7 @@ Map the important dependencies and coupling points.
 
 Use:
 ```bash
-ix callers "$TARGET" --limit 20 --format json
+ix callers "$TARGET" --limit 15 --format json
 ix callees "$TARGET" --limit 15 --format json
 ix depends "$TARGET" --depth 2 --format json
 ```

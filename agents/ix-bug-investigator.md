@@ -19,7 +19,7 @@ Each iteration: gather evidence → form hypothesis → decide if you need more 
 Before tracing, build a lightweight `ix-docs`-style context:
 ```bash
 ix subsystems --format json
-ix locate "$SYMPTOM" --limit 5 --format json
+ix locate "$SYMPTOM" --format json
 ```
 
 If the likely subsystem or boundary component is still unclear, add:
@@ -35,7 +35,7 @@ Use this only to answer:
 ### Step 1 — Locate the entry point
 
 ```bash
-ix locate "$SYMPTOM" --limit 5 --format json
+ix locate "$SYMPTOM" --format json
 ix text   "$SYMPTOM" --limit 10 --format json
 ```
 
@@ -59,7 +59,7 @@ Classify what kind of entity this is:
 ### Step 3 — Trace the execution path
 
 ```bash
-ix trace <entry-point> --downstream --format json
+ix trace <entry-point> --downstream --depth 2 --format json
 ```
 
 Walk the downstream call chain. At each node, ask:
@@ -91,7 +91,7 @@ Look for: missing null checks, wrong assumptions about input format, incorrect s
 ### Step 6 — Check for related issues (if ix pro available)
 
 ```bash
-ix bugs --status open --format json
+ix bugs --format json
 ```
 
 Are there existing bug reports related to this component?

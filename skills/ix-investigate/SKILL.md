@@ -77,7 +77,7 @@ ix callees <symbol> --limit 15 --format json
 ## Phase 4 — Trace (run only if execution flow is unclear)
 
 ```bash
-ix trace <symbol> --format json
+ix trace <symbol> --depth 2 --format json
 ```
 
 One trace only. Pick the most representative direction (`--upstream` or `--downstream`) based on the question.

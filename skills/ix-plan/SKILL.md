@@ -66,7 +66,7 @@ Otherwise continue inline with Phases 3–5.
 
 Find how the targets connect:
 ```bash
-ix trace <highest-risk-target> --to <second-target> --format json
+ix trace <highest-risk-target> --to <second-target> --depth 2 --format json
 ```
 
 Run for the most architecturally significant pair. Skip if targets are in independent subsystems.

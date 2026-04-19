@@ -45,7 +45,7 @@ Classify each smell:
 Run only when Phase 1 or 2 reveals significant issues:
 ```bash
 ix rank --by dependents --kind class    --top 10 --exclude-path test --format json
-ix rank --by dependents --kind function --top 10 --exclude-path test --format json
+ix rank --by callers    --kind function --top 10 --exclude-path test --format json
 ```
 
 Correlate: components that are both **highly central** and in **poorly-bounded subsystems** are the highest-risk change targets.
@@ -62,6 +62,15 @@ ix smells --format json
 
 **Hard limit:** One region. Do not audit every subsystem — identify the worst and analyze that.
 
+### Step 5 — Stop conditions check
+
+Stop when you have:
+1. A ranked list of structural issues with metric evidence
+2. Identification of the 2–3 most critical areas
+3. Concrete improvement suggestions
+
+Do not continue running queries once you have sufficient evidence. If the findings from Steps 1–4 are clear enough, skip Step 6 and proceed to Output.
+
 ### Step 6 — Active plans cross-reference **[Pro]**
 
 ```bash
@@ -75,15 +84,6 @@ If it returns JSON with a `revision` field (Pro is available):
 - Include findings as a "Cross-reference: Active Plans vs Audit Findings" section in the report
 
 If `ix briefing` errors or returns no plans/decisions, skip this step entirely.
-
-## Stop conditions
-
-Stop when you have:
-1. A ranked list of structural issues with metric evidence
-2. Identification of the 2–3 most critical areas
-3. Concrete improvement suggestions
-
-Do not continue running queries once you have sufficient evidence to produce the report.
 
 ## Output format
 

@@ -79,7 +79,7 @@ If the Agent tool is unavailable, continue inline through Phases 4–6, reduce b
 ## Phase 4 — Trace the execution path (inline path)
 
 ```bash
-ix trace <entry-point> --downstream --format json
+ix trace <entry-point> --downstream --depth 2 --format json
 ```
 
 Walk the downstream path. At each step, look for:
@@ -146,9 +146,9 @@ Read **the specific function only**. Look for:
 - Run `/ix-investigate <X>` to understand [unclear component] more deeply
 
 **[Pro]** If this is a new bug, log it:
-```
-ix bug create "<symptom title>" --severity <low|medium|high|critical> --affects <entry-point>
-```
+
+    ix bug create "<symptom title>" --severity <low|medium|high|critical> --affects <entry-point>
+
 (Omit if Pro unavailable or bug already tracked.)
 ```
 

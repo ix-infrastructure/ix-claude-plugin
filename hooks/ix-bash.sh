@@ -15,8 +15,16 @@ INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
-# Only intercept grep/rg invocations
-echo "$COMMAND" | grep -qE '^\s*(grep|rg)\s' || exit 0
+# Intercept direct grep/rg invocations plus common wrapped forms such as:
+#   cd src && rg AuthService
+#   (cd src; grep AuthService)
+#   find . | xargs grep AuthService
+SEARCH_CMD=""
+SEARCH_CMD=$(printf '%s\n' "$COMMAND" \
+  | grep -oE '(^|[[:space:];|&()])(grep|rg)[[:space:]].*' \
+  | tail -1 \
+  | sed -E 's/^[[:space:];|&()]+//; s/[[:space:]]*\)+[[:space:]]*$//' 2>/dev/null) || SEARCH_CMD=""
+[ -z "$SEARCH_CMD" ] && exit 0
 
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,15 +34,16 @@ ix_health_check
 IX_HOOK_NAME="ix-bash"
 _t0=$(date +%s%3N 2>/dev/null || echo 0)
 ix_log "ENTRY command='${COMMAND:0:80}'"
+ix_log "SEARCH command='${SEARCH_CMD:0:80}'"
 
 # ── Extract search pattern from command ────────────────────────────────────────
 PATTERN=""
-PATTERN=$(echo "$COMMAND" | sed -E 's/.*\s"([^"]+)".*/\1/' 2>/dev/null) || PATTERN=""
-if [ -z "$PATTERN" ] || [ "$PATTERN" = "$COMMAND" ]; then
-  PATTERN=$(echo "$COMMAND" | sed -E "s/.*\s'([^']+)'.*/\1/" 2>/dev/null) || PATTERN=""
+PATTERN=$(echo "$SEARCH_CMD" | sed -E 's/.*\s"([^"]+)".*/\1/' 2>/dev/null) || PATTERN=""
+if [ -z "$PATTERN" ] || [ "$PATTERN" = "$SEARCH_CMD" ]; then
+  PATTERN=$(echo "$SEARCH_CMD" | sed -E "s/.*\s'([^']+)'.*/\1/" 2>/dev/null) || PATTERN=""
 fi
-if [ -z "$PATTERN" ] || [ "$PATTERN" = "$COMMAND" ]; then
-  PATTERN=$(echo "$COMMAND" | sed -E 's/^\s*(grep|rg)\s+(-[a-zA-Z0-9]+\s+|--[a-zA-Z-]+=\S+\s+)*([^-][^ ]*).*/\3/' 2>/dev/null) || PATTERN=""
+if [ -z "$PATTERN" ] || [ "$PATTERN" = "$SEARCH_CMD" ]; then
+  PATTERN=$(echo "$SEARCH_CMD" | sed -E 's/^\s*(grep|rg)\s+(-[a-zA-Z0-9]+\s+|--[a-zA-Z-]+=\S+\s+)*([^-][^ ]*).*/\3/' 2>/dev/null) || PATTERN=""
 fi
 
 [ -z "$PATTERN" ] && { ix_log "SKIP could not extract pattern"; exit 0; }

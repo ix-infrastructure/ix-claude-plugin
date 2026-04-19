@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DISABLED — removed from hooks.json per Phase E spec.
+# DISABLED — removed from hooks.json per Phase E spec; not active at runtime.
 # The additive Read hook added 3 ix commands of overhead without preventing
 # the file read. Behavioral steering is handled by CLAUDE.md + briefing hook.
 # To re-enable: add Read matcher back to hooks.json.

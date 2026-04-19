@@ -127,13 +127,16 @@ All hooks:
 Hook registry (`hooks/hooks.json`):
 ```
 UserPromptSubmit            → ix-briefing.sh      (10s timeout)
+UserPromptSubmit            → ix-annotate.sh      (5s timeout)
 PreToolUse(Grep|Glob)       → ix-intercept.sh     (10s timeout)
-PreToolUse(Read)            → ix-read.sh          (8s timeout)
 PreToolUse(Bash)            → ix-bash.sh          (10s timeout)
 PreToolUse(Edit|Write|MultiEdit) → ix-pre-edit.sh (10s timeout)
 PostToolUse(Edit|Write|MultiEdit|NotebookEdit) → ix-ingest.sh (async, 30s)
 Stop                        → ix-map.sh           (async, 60s)
 ```
+
+`hooks/ix-read.sh` remains in the repo as a disabled placeholder. It is not
+registered in `hooks/hooks.json`, so no Read hook runs at runtime.
 
 ---
 
@@ -158,6 +161,10 @@ Fires before any Grep or Glob tool call. Runs graph queries in parallel and inje
 a one-line context summary so Claude has graph-aware knowledge before the native
 tool runs. The native tool still runs afterward.
 
+**No-op cases:**
+- Grep patterns shorter than 3 chars, secret-like strings, regex/literal searches, or empty ix results
+- Glob calls without a path, bare extension globs such as `*.ts`, literal path globs, or empty inventory results
+
 **Grep path:**
 1. Extracts pattern from tool input. Skips if < 3 chars.
 2. Runs `ix text <pattern> --limit 15` and `ix locate <pattern>` in parallel
@@ -175,41 +182,22 @@ tool runs. The native tool still runs afterward.
 
 ---
 
-### ix-read.sh — PreToolUse(Read)
+### ix-read.sh — disabled placeholder
 
-Fires before Claude reads a file. Injects a summary of what's in the file and
-whether it's risky to modify.
-
-**Skips entirely for:**
-- Binary/generated/vendor files (.png, .pdf, node_modules, dist, generated, __pycache__)
-- Lock files (package-lock.json, yarn.lock, go.sum, Cargo.lock, pnpm-lock.yaml)
-
-**Skips ix impact for:**
-- Test/spec/mock files
-- Config files (.yaml, .yml, .toml, .ini, .env, tsconfig, jsconfig)
-- Files under 50 lines (impact meaningless at that scale)
-
-**Per-file TTL cache (5 minutes):** Hashes the file path, stores timestamp in
-`/tmp/ix-read-cache/<hash>`. Skips re-injection if the same file was processed
-in the last 5 minutes.
-
-**Runs in parallel:**
-- `ix inventory --kind file --path <filename> --format json`
-- `ix overview <filename> --format json`
-- `ix impact <filename> --format json` (unless SKIP_IMPACT is set)
-
-**Confidence gate (from ix overview):**
-- confidence < 0.3 → exit 0, inject nothing
-- confidence < 0.6 → prepend `⚠ Graph confidence low (N)` warning
-
-**Injects:** `[ix] filename.ts — key: ClassA, fnB, fnC (2 methods, 1 class) | ⚠️ HIGH RISK: 47 dependents | Use ix read <symbol> for symbol source`
+`ix-read.sh` is kept for potential future use, but it was removed from
+`hooks/hooks.json` in Phase E because the additive Read hook cost more than it
+saved. Read tool calls do not trigger any ix hook at runtime.
 
 ---
 
 ### ix-bash.sh — PreToolUse(Bash)
 
-Fires before any Bash tool call. Only activates if the command starts with `grep`
-or `rg`.
+Fires before Bash tool calls that contain a `grep` or `rg` search segment,
+including wrapped forms such as `cd src && rg AuthService` and
+`find src -name '*.ts' | xargs grep AuthService`.
+
+**No-op cases:** non-search Bash commands, extracted patterns shorter than 3 chars,
+secret-like strings, or empty ix results.
 
 1. Extracts search pattern via sed (handles quoted strings, flags, bare patterns)
 2. Skips if pattern < 3 chars
@@ -222,7 +210,8 @@ or `rg`.
 
 Fires before Claude edits or creates a file. Warns about blast radius.
 
-**Skips for:** .md, .txt, .lock, binary files, compiled artifacts (.pyc, .class, .o)
+**No-op cases:** markdown/text/lock files, common binary assets, compiled artifacts,
+unknown graph targets, low-risk files, or files with fewer than 3 effective dependents.
 
 1. Runs `ix impact <filename> --format json`
 2. Uses whichever is higher: directDependents vs memberLevelCallers
@@ -253,11 +242,30 @@ Fires after Claude modifies a file. Runs async (does not block Claude's response
 
 ### ix-map.sh — Stop hook
 
-Fires after Claude finishes each response. Runs async via `nohup ... & disown`.
+Fires after Claude finishes each response. Runs asynchronously through Claude
+Code's hook runner.
 
-- Runs `ix map` (full graph refresh) in the background
+- No-op if a full map ran within `IX_MAP_DEBOUNCE_SECONDS` or another map already
+  holds the lock
+- Runs `ix map` (full graph refresh) in the background when not skipped
 - Ensures the next session or prompt starts with an up-to-date graph
 - Does nothing visible — no additionalContext injected
+
+---
+
+### ix-annotate.sh — UserPromptSubmit
+
+Fires at the start of a user prompt and summarizes the previous turn's ix
+contribution from the ledger.
+
+**No-op cases:** `IX_ANNOTATE_MODE=off`, `IX_ANNOTATE_CHANNEL=modelSuffix`,
+unsupported channels, missing/empty ledger records, or turns where no hook
+produced non-zero injected context.
+
+- Reads the current session's last-turn ledger records
+- Emits one terse attribution sentence keyed to the highest-priority hook type
+- Uses `systemMessage`, `additionalContext`, or both depending on
+  `IX_ANNOTATE_CHANNEL`
 
 ---
 
@@ -1057,9 +1065,9 @@ User types: "how does the auth middleware work?"
    - Claude now knows the symbol location from graph before Grep even runs
 
 4. Claude invokes Read("middleware/auth.ts")
-5. ix-read.sh fires BEFORE Read:
-   - runs ix inventory + ix overview + ix impact in parallel
-   - injects: `[ix] auth.ts — key: AuthMiddleware, validateToken, refreshSession | ⚠️ HIGH RISK: 23 dependents | Use ix read <symbol> for symbol source`
+5. No Read hook fires:
+   - `ix-read.sh` is disabled and not registered in `hooks/hooks.json`
+   - Claude reads the file directly if it still needs implementation detail
 
 6. Claude invokes Edit("middleware/auth.ts", ...)
 7. ix-pre-edit.sh fires BEFORE Edit:
@@ -1068,7 +1076,7 @@ User types: "how does the auth middleware work?"
 
 8. Edit proceeds.
 9. ix-ingest.sh fires AFTER Edit (async) → runs ix map middleware/auth.ts → graph updated
-10. Claude finishes responding.
+10. Claude finishes responding with one short final line like: `Ix: surfaced symbol matches before search, flagged file risk before read, and warned about a high-risk edit.`
 11. ix-map.sh fires (async, Stop) → runs ix map (full refresh) in background
 
 ---
@@ -1087,7 +1095,7 @@ hooks/
   ix-errors.sh            Error capture + local JSONL logging with secret redaction
   ix-briefing.sh          UserPromptSubmit: inject session briefing (Pro only)
   ix-intercept.sh         PreToolUse(Grep|Glob): front-run with ix text + locate
-  ix-read.sh              PreToolUse(Read): inject inventory + overview + impact
+  ix-read.sh              Disabled placeholder; not registered in hooks.json
   ix-bash.sh              PreToolUse(Bash): intercept grep/rg commands
   ix-pre-edit.sh          PreToolUse(Edit|Write): blast-radius warning before edit
   ix-ingest.sh            PostToolUse(Edit|Write): async graph update for changed file

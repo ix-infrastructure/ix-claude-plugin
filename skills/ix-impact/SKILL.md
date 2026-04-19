@@ -52,7 +52,7 @@ This caveat applies regardless of the `ix impact` risk classification.
 
 Run in parallel:
 ```bash
-ix callers  $ARGUMENTS --limit 20 --format json
+ix callers  $ARGUMENTS --limit 15 --format json
 ix depends  $ARGUMENTS --depth 2 --format json
 ```
 
