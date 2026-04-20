@@ -64,11 +64,11 @@ Autonomous multi-step agents for complex tasks:
 | Trigger | Hook | Effect |
 |---------|------|--------|
 | User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**; also instructs Claude to append a short final `Ix` section when hooks helped |
-| User sends any prompt | `UserPromptSubmit` → `ix-annotate.sh` | Emits a terse last-turn attribution summary on non-`modelSuffix` channels |
 | Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Front-runs with `ix text` + `ix locate`/`ix inventory` |
 | Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts pattern, front-runs with `ix text` + `ix locate` |
 | Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | Runs `ix impact` before the edit |
 | Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Runs `ix map <file>` to update the graph |
+| Claude finishes responding | `Stop` → `ix-annotate.sh` | Emits a factual summary of how ix helped on that turn on non-`modelSuffix` channels |
 | Claude finishes responding | `Stop` → `ix-map.sh` (async) | Runs `ix map` to refresh the full graph |
 
 `hooks/ix-read.sh` remains in the repo as a disabled placeholder, but it is not registered in `hooks/hooks.json` and does not run at runtime.

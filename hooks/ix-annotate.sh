@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ix-annotate.sh — synchronous attribution/nudge hook
+# ix-annotate.sh — Stop hook attribution summary
 #
-# Reads the current session's ix ledger records and emits a concise summary on
-# the configured channel. Model-suffix instruction handling lives in
-# ix-briefing.sh, so this hook stays silent for modelSuffix-only mode.
+# Fires on Stop, reads the current turn's ix ledger records, and emits a concise
+# factual summary on the configured channel. Model-suffix instruction handling
+# lives in ix-briefing.sh, so this hook stays silent for modelSuffix-only mode.
 
 set -euo pipefail
 

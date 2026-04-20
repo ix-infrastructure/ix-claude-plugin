@@ -9,15 +9,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ix-annotate.sh",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PreToolUse": [
@@ -66,6 +57,15 @@
       }
     ],
     "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ix-annotate.sh",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "hooks": [
           {

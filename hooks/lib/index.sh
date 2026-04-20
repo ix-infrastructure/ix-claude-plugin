@@ -33,7 +33,7 @@ source "${_IX_LIB_DIR}/../ix-ledger.sh" 2>/dev/null || true
 
 # ── Plugin env defaults (override via shell env) ──────────────────────────────
 IX_ANNOTATE_MODE="${IX_ANNOTATE_MODE:-brief}"                   # off | brief | debug | verbose
-IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-modelSuffix}"      # systemMessage | modelSuffix | both
+IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-both}"             # systemMessage | modelSuffix | both
 IX_INGEST_INJECT="${IX_INGEST_INJECT:-off}"                    # off | on | debug-only
 IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
 IX_MAP_LOCK_PATH="${IX_MAP_LOCK_PATH:-${TMPDIR:-/tmp}/ix-map.lock}"
