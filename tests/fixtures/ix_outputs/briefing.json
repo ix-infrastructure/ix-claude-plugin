@@ -1,0 +1,14 @@
+{
+  "goalCount": 1,
+  "activeGoals": [
+    {
+      "name": "Mock goal"
+    }
+  ],
+  "openBugs": [],
+  "recentDecisions": [
+    {
+      "name": "Mock decision"
+    }
+  ]
+}

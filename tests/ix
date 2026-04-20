@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# tests/ix — Drop-in ix executable for tests.
+# Delegates to mock-ix.sh so PATH="tests:$PATH" makes the mock resolve as `ix`.
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mock-ix.sh" "$@"

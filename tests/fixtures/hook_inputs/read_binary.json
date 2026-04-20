@@ -1,0 +1,8 @@
+{
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/home/user/myrepo/assets/logo.png"
+  },
+  "cwd": "/home/user/myrepo",
+  "session_id": "test-session-001"
+}

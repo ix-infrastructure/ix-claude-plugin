@@ -1,0 +1,10 @@
+{
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/home/user/myrepo/src/utils/helper.ts",
+    "old_string": "foo",
+    "new_string": "bar"
+  },
+  "cwd": "/home/user/myrepo",
+  "session_id": "test-session-001"
+}

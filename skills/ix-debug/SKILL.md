@@ -1,12 +1,19 @@
 ---
 name: ix-debug
 description: Root cause analysis — trace execution path to a failure, narrow candidates, read minimal source only at suspected failure points.
-argument-hint: <symptom, failing function, or suspected component>
+argument-hint: <error message, symptom description, or name of failing function> [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, use Grep + Read as fallback.
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before resolving the entry point.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-debug-<target-slug>.md` in cwd (target slug = the first symbol or first three words of the symptom with spaces and slashes replaced by `-`).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Pro check (optional)
 
@@ -72,7 +79,7 @@ If the Agent tool is unavailable, continue inline through Phases 4–6, reduce b
 ## Phase 4 — Trace the execution path (inline path)
 
 ```bash
-ix trace <entry-point> --downstream --format json
+ix trace <entry-point> --downstream --depth 2 --format json
 ```
 
 Walk the downstream path. At each step, look for:
@@ -139,8 +146,13 @@ Read **the specific function only**. Look for:
 - Run `/ix-investigate <X>` to understand [unclear component] more deeply
 
 **[Pro]** If this is a new bug, log it:
-```
-ix bug create "<symptom title>" --severity <low|medium|high|critical> --affects <entry-point>
-```
+
+    ix bug create "<symptom title>" --severity <low|medium|high|critical> --affects <entry-point>
+
 (Omit if Pro unavailable or bug already tracked.)
 ```
+
+**Save step (only if `SAVE_PATH` is non-empty):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

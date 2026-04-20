@@ -1,12 +1,19 @@
 ---
 name: ix-investigate
 description: Deep dive into a symbol, feature, or bug. Graph-first, minimal code reads, early stopping when sufficient evidence found.
-argument-hint: <symbol, feature description, or "how does X work">
+argument-hint: <symbol, function name, or "how does X work?"> [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, use Grep + Read as fallback.
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before resolving the target.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-investigate-<target-slug>.md` in cwd (target slug = the target with spaces and slashes replaced by `-`).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Pro check (optional)
 
@@ -70,7 +77,7 @@ ix callees <symbol> --limit 15 --format json
 ## Phase 4 — Trace (run only if execution flow is unclear)
 
 ```bash
-ix trace <symbol> --format json
+ix trace <symbol> --depth 2 --format json
 ```
 
 One trace only. Pick the most representative direction (`--upstream` or `--downstream`) based on the question.
@@ -121,3 +128,8 @@ Include any relevant decisions in the output under **Design context**.
 ```
 
 If confidence < 0.7 in ix output, label those claims as `[uncertain]` and recommend `ix map` to refresh.
+
+**Save step (only if `SAVE_PATH` is non-empty):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

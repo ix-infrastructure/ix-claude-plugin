@@ -1,0 +1,14 @@
+{
+  "riskLevel": "high",
+  "riskSummary": "Core authentication module used by multiple subsystems.",
+  "summary": {
+    "directDependents": 12,
+    "memberLevelCallers": 8
+  },
+  "topImpactedMembers": [
+    {"name": "login"},
+    {"name": "validateToken"},
+    {"name": "logout"}
+  ],
+  "nextStep": "Run auth test suite before committing."
+}

@@ -1,7 +1,7 @@
 ---
 name: ix-docs
 description: Generate narrative-first, importance-weighted documentation for a repo, system, or subsystem with a selective reference layer. Use --full for deeper module/class/method coverage.
-argument-hint: <target> [--full] [--style narrative|reference|hybrid] [--split] [--single-doc] [--out <path>]
+argument-hint: <target> [--full] [--style narrative|reference|hybrid] [--split] [--single-doc] [--out <path>] [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -58,6 +58,7 @@ Every `ix-docs` run produces **two layers**:
 | `--split` | `SPLIT=true` | false |
 | `--single-doc` | `SINGLE=true` | false |
 | `--out <path>` | `OUT_PATH` | auto-detect |
+| `--save [path]` | alias for `--out` when `--out` is absent; if both are given, `--out` wins | — |
 
 **Parsing**
 Scan `$ARGUMENTS` left to right:
@@ -290,7 +291,7 @@ Map the important dependencies and coupling points.
 
 Use:
 ```bash
-ix callers "$TARGET" --limit 20 --format json
+ix callers "$TARGET" --limit 15 --format json
 ix callees "$TARGET" --limit 15 --format json
 ix depends "$TARGET" --depth 2 --format json
 ```

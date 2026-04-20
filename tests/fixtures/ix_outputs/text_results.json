@@ -1,0 +1,6 @@
+[
+  {"path": "src/auth.ts",            "line": 42, "text": "class AuthService {"},
+  {"path": "src/auth.ts",            "line": 87, "text": "export const authService = new AuthService()"},
+  {"path": "src/middleware/auth.ts", "line": 12, "text": "import { AuthService } from '../auth'"},
+  {"path": "tests/auth.test.ts",     "line":  5, "text": "describe('AuthService', () => {"}
+]

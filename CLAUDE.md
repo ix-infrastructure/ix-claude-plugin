@@ -1,196 +1,131 @@
 # ix-claude-plugin
+> For the canonical Ix operating model (command taxonomy, routing, fallback behavior),
+> see `skills/shared.md`. This file covers contributing to ix-claude-plugin specifically.
 
 This repo is the Claude Code plugin for [Ix Memory](https://github.com/ix-infrastructure/Ix). When working in this repo, use `ix` commands to navigate it just like any other codebase.
-
----
+This repo contains shipped skills, hook scripts, tests, and marketplace metadata.
 
 ## Cognitive Model
-
-Claude + Ix operates as a **three-layer system**:
-
+Claude + Ix operates as a three-layer system:
+```text
+Ix Graph        = structured memory
+Claude          = reasoning engine
+Skills / Agents = task abstractions over the graph
 ```
-Ix Graph     = structured memory (code relationships, history, decisions)
-Claude       = reasoning engine (infers, synthesizes, decides)
-Skills/Agents = cognition layer (task abstractions over the graph)
-```
-
-This means Claude is **not a command wrapper**. Claude uses Ix as memory to reason, then synthesizes answers. The graph provides facts; Claude provides understanding.
-
----
-
-## Behavioral Rules
-
-### Always
-- Use Ix graph data **before** reading source code
-- Read at **symbol level** only — `ix read <function>`, never whole files
-- Use **high-level skills** (`/ix-investigate`, `/ix-understand`) not raw commands
-- **Stop early** — once you can answer the question, stop querying
-- **Label evidence** — distinguish graph-backed facts from inferences
-
-### Never
-- Scan entire files unless the whole file is the explicit subject
-- Call `ix depends --depth 3+` or `ix trace` without a specific question
-- Assume behavior without graph or code evidence
-- Output raw JSON — always synthesize and summarize
-- Run `ix map` for exploration (use `ix subsystems` — it reads cached data)
-- Run `ix rank` without `--by <metric>` and `--kind <kind>` (will error)
-
----
-
-## Reasoning Strategy
-
-When answering a question about the codebase:
-
-```
-1. Orient       → ix subsystems or ix overview (understand the shape)
-2. Locate       → ix locate (find the specific entity)
-3. Explain      → ix explain (get role, connections from graph)
-4. Trace/Depend → ix trace or ix depends (only if flow/blast-radius needed)
-5. Read         → ix read <symbol> (only if implementation detail needed)
-6. Synthesize   → answer the question, cite evidence
-7. Suggest      → one useful next step
-```
-
-**Skip steps** if earlier steps answer the question. Most questions stop at step 3.
-
----
-
-## Token Budget Rules
-
-| Operation | Rule |
-|---|---|
-| Text search | `--limit 20` cap |
-| Symbol rank | `--top 10` cap, always `--exclude-path test` |
-| Callers/callees | `--limit 15` cap |
-| Dependency tree | `--depth 2` max unless user asks for deeper |
-| Code reads | Symbol-level only, max 2 per task |
-| Traces | One trace per investigation; `--depth 2` max |
-
----
-
-## Skill Reference
-
-| Skill | Purpose | When to use |
-|---|---|---|
-| `/ix-understand [target]` | Mental model of a system | Onboarding, architecture questions, "how does X work?" |
-| `/ix-investigate <symbol>` | Deep dive into a component | Before modifying, explaining, or debugging something |
-| `/ix-impact <target>` | Change risk analysis | Before any non-trivial edit |
-| `/ix-plan <targets...>` | Risk-ordered change plan; delegates to `ix-safe-refactor-planner` for targets with >20 dependents or region coupling >5 | Multi-file changes, refactors |
-| `/ix-debug <symptom>` | Root cause analysis; delegates to `ix-bug-investigator` for multi-subsystem or low-confidence bugs | Bug investigation, unexpected behavior |
-| `/ix-architecture [scope]` | Design health analysis; delegates to `ix-architecture-auditor` when ≥3 smells, god-module, or crosscut >0.1 | Code review, architecture discussions |
-| `/ix-docs <target> [--full] [--style narrative|reference|hybrid] [--split] [--single-doc] [--out <path>]` | Write narrative-first docs; dispatches parallel `ix-system-explorer` agents for large targets in `--full` mode | Onboarding docs, handoffs, deep reference |
-
-`ix-docs` writes a narrative-first Markdown document (or split doc set) to disk. Each run starts with an onboarding-friendly narrative layer and ends with a selective reference section for the most important modules, classes, and, in `--full`, key methods. Output path auto-detects `docs/`, `doc/`, or workspace root if `--out` is omitted.
-
-**Modes:**
-- *(default)* — narrative-focused onboarding doc with a compact selective reference appendix
-- `--full` — deeper coverage for important systems, modules, classes, and selected methods; still importance-weighted, never exhaustive
-- `--style narrative` — prose-first narrative sections with a compact reference layer
-- `--style reference` — docs-site style structure with a briefer narrative layer
-- `--style hybrid` — full narrative plus fuller selective reference; recommended with `--full`
-- `--full --split` — produce `index.md` plus per-system or per-subsystem docs for large repos
-- `--full --single-doc` — force one large file regardless of repo size
-
----
-
-## Agent Reference
-
-| Agent | Purpose |
-|---|---|
-| `ix-explorer` | General-purpose exploration, open-ended questions |
-| `ix-system-explorer` | Full architectural mental model of a codebase or region |
-| `ix-bug-investigator` | Autonomous root cause analysis from symptom to candidates |
-| `ix-safe-refactor-planner` | Blast radius + safe change sequencing for refactors |
-| `ix-architecture-auditor` | Full structural health report with ranked improvements |
-
----
+The plugin exists to make that model usable inside Claude Code through install-time
+teaching, hook-driven context injection, and higher-level reasoning skills.
 
 ## Repo Structure
-
-```
+```text
 skills/
-  ix-understand/SKILL.md     — mental model (graph only)
-  ix-investigate/SKILL.md    — symbol deep dive (graph + minimal read)
-  ix-impact/SKILL.md         — risk analysis (graph only)
-  ix-plan/SKILL.md           — change plan (graph + optional read)
-  ix-debug/SKILL.md          — root cause analysis (graph + targeted read)
-  ix-architecture/SKILL.md   — design health (graph only)
-
+  shared.md                  canonical install-time Ix model
+  ix-help/                   router skill
+  ix-understand/             architecture mental model
+  ix-investigate/            symbol deep dive
+  ix-impact/                 pre-edit blast radius
+  ix-plan/                   risk-ordered change planning
+  ix-debug/                  bug investigation
+  ix-architecture/           design health audit
+  ix-docs/                   narrative-first documentation
 agents/
-  ix-explorer.md             — general exploration
-  ix-system-explorer.md      — architectural model building
-  ix-bug-investigator.md     — autonomous debugging
-  ix-safe-refactor-planner.md — refactor safety planning
-  ix-architecture-auditor.md — structural health audit
-
+  ix-explorer.md
+  ix-system-explorer.md
+  ix-bug-investigator.md
+  ix-safe-refactor-planner.md
+  ix-architecture-auditor.md
 hooks/
-  ix-briefing.sh    — UserPromptSubmit: inject session context (Pro)
-  ix-intercept.sh   — PreToolUse(Grep|Glob): front-run with ix text + ix locate
-  ix-read.sh        — PreToolUse(Read): inject ix overview + inventory
-  ix-bash.sh        — PreToolUse(Bash): intercept grep/rg, run ix text instead
-  ix-pre-edit.sh    — PreToolUse(Edit|Write): run ix impact before edits
-  ix-ingest.sh      — PostToolUse(Write|Edit): async ix map <file>
-  ix-map.sh         — Stop: async ix map to refresh full graph
-  hooks.json        — hook event → script mapping
-
+  hooks.json                 active Claude Code hook registry
+  ix-briefing.sh             prompt-time session context
+  ix-annotate.sh             visible attribution / briefing annotation
+  ix-intercept.sh            Grep / Glob interception
+  ix-bash.sh                 grep / rg detection inside Bash commands
+  ix-pre-edit.sh             pre-edit impact warning
+  ix-ingest.sh               post-edit single-file map
+  ix-map.sh                  async Stop-time full map refresh
+  ix-read.sh                 disabled placeholder; not registered
+  ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh
+tests/
+  test_hooks.sh              integration harness
+  mock-ix.sh                 ix CLI stub
+  fixtures/                  hook inputs and expected outputs
 .claude-plugin/
-  plugin.json       — plugin manifest (name, version)
+  plugin.json                plugin manifest
+  marketplace.json           marketplace metadata
 ```
+Active hooks are defined by `hooks/hooks.json`: briefing + annotate on prompt
+submit, intercept for `Grep|Glob`, bash interception for `Bash`, pre-edit
+warnings for edits, ingest on post-edit, and full map refresh on `Stop`.
 
----
+## Skills
+Each skill is a reasoning protocol, not a command alias. It should choose the
+cheapest path that answers the user's question and stop once enough evidence exists.
 
-## Skill Format
-
+Required frontmatter:
 ```markdown
 ---
 name: ix-<name>
 description: <one-line description>
-argument-hint: <shown as placeholder>
+argument-hint: <placeholder shown in slash-command UI>
 ---
-
-<reasoning protocol — not a command list>
 ```
 
-`$ARGUMENTS` = user input after the skill name.
+Good skill properties:
+- Phased workflow with explicit stop conditions
+- Graph-first structure; source reads only as a late fallback
+- Risk-scaled depth rather than fixed command sequences
+- Structured output focused on findings, confidence, and next step
+- Clear delegation rules when an agent is warranted
 
-### Writing a good skill
+Avoid one-to-one CLI wrappers, default full-file reads, raw JSON dumps, and
+exhaustive fixed query lists that ignore task complexity.
 
-A valid skill:
-- Has **phases with stop conditions** (stop when answer is sufficient)
-- **Scales depth with risk** (low-risk = less queries)
-- **Reads code last** and only at symbol level
-- Produces **structured output** (Summary, Findings, Evidence, Next Step)
-- Is a **capability**, not a CLI alias
+When adding or changing a skill:
+1. Update the relevant `skills/ix-*/SKILL.md`.
+2. Keep universal Ix doctrine in `skills/shared.md`, not here.
+3. Add the skill to the `skills/shared.md` table if it is user-facing.
+4. Check whether docs or marketplace metadata mention the skill.
 
-An invalid skill:
-- Maps 1:1 to a CLI command
-- Has no conditional logic or stop conditions
-- Reads full files or too much code
-- Outputs raw command results
+## Agents
+The repo ships these agent specs:
+- `ix-explorer` — general open-ended exploration
+- `ix-system-explorer` — architecture and subsystem mental models
+- `ix-bug-investigator` — root-cause analysis from symptoms
+- `ix-safe-refactor-planner` — safe sequencing for risky refactors
+- `ix-architecture-auditor` — structural health analysis and improvements
 
----
+Keep agent prompts complementary to the skills. Skills decide when to delegate;
+agents do the heavier exploration or synthesis once invoked.
 
-## ix CLI quick reference
+## Contributing Notes
+Hook work:
+- Start with `hooks/hooks.json` to verify which hooks are actually active.
+- Put reusable logic in `hooks/ix-lib.sh` or `hooks/lib/index.sh`, not inline everywhere.
+- Keep hook output short and attributable; these paths are latency-sensitive.
+- If a hook is intentionally disabled, leave that explicit in the script header as with `hooks/ix-read.sh`.
 
-| Task | Command |
-|---|---|
-| Architecture overview | `ix subsystems --format json` |
-| Structural summary | `ix overview <name> --format json` |
-| Understand a symbol | `ix explain <symbol> --format json` |
-| Find definition | `ix locate <symbol> --format json` |
-| Read one symbol's source | `ix read <symbol> --format json` |
-| Trace call chain | `ix trace <symbol> --format json` |
-| Who calls it | `ix callers <symbol> --format json` |
-| What it calls | `ix callees <symbol> --limit 15 --format json` |
-| What imports it | `ix imported-by <path> --format json` |
-| Members of a class | `ix contains <symbol> --format json` |
-| Upstream dependents | `ix depends <symbol> --depth 2 --format json` |
-| Blast radius | `ix impact <target> --format json` |
-| List entities in path | `ix inventory --kind function --path <dir> --format json` |
-| Text search | `ix text <pattern> --limit 20 --format json` |
-| Code smells | `ix smells --format json` |
-| Rank key components | `ix rank --by dependents --kind class --top 10 --format json` |
-| Refresh graph | `ix map --silent` |
+Testing:
+- Run `bash tests/test_hooks.sh` after hook changes.
+- The harness uses `tests/mock-ix.sh` and fixture JSON to validate behavior without a live ix server.
+- Prefer targeted fixture additions over broad test rewrites when adjusting one hook path.
 
-> `ix rank` requires `--by` (dependents/callers/importers/members) and `--kind` — both required options.
-> Never use `ix query` — deprecated.
+Manual checks:
+- Match the active path rather than a no-op path.
+- Grep / Glob behavior lives in `ix-intercept.sh`; shell `grep` / `rg` behavior lives in `ix-bash.sh`.
+- Stop-time behavior is split between `ix-map.sh` and `ix-annotate.sh`.
+
+Docs and metadata:
+- `skills/shared.md` is the portable user-facing mental model.
+- `CLAUDE.md` is repo-local contributor guidance.
+- `IX_CLAUDE_PLUGIN_OVERVIEW.md` may lag runtime behavior; verify against `hooks/hooks.json` and tests before copying from it.
+- `.claude-plugin/plugin.json` carries plugin identity and version.
+- `.claude-plugin/marketplace.json` carries marketplace-facing metadata.
+
+## Practical Workflow
+For most repo changes:
+1. Confirm the active behavior in `hooks/hooks.json`, tests, and the relevant skill or hook file.
+2. Make the smallest coherent edit in the shipped asset.
+3. Run the narrowest useful verification, usually `bash tests/test_hooks.sh` for hook work.
+4. Update nearby docs only where they describe the changed behavior.
+
+If guidance here conflicts with `skills/shared.md`, treat `skills/shared.md` as
+the canonical Ix usage model and keep this file focused on maintaining the plugin.

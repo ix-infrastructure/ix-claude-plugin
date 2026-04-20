@@ -1,12 +1,19 @@
 ---
 name: ix-plan
 description: Generate a risk-ordered implementation plan for a set of targets. Assesses blast radius per target, finds data flows between them, and produces a safe change sequence.
-argument-hint: <symbol1> [symbol2] [symbol3] ... OR description of change
+argument-hint: <symbol1> [symbol2...] or "description of what you want to change" [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, use Grep + Read to manually assess blast radius per target.
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before resolving targets.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-plan-<target-slug>.md` in cwd (target slug = the first target or first three words of the description with spaces and slashes replaced by `-`).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Pro check (optional)
 
@@ -59,7 +66,7 @@ Otherwise continue inline with Phases 3–5.
 
 Find how the targets connect:
 ```bash
-ix trace <highest-risk-target> --to <second-target> --format json
+ix trace <highest-risk-target> --to <second-target> --depth 2 --format json
 ```
 
 Run for the most architecturally significant pair. Skip if targets are in independent subsystems.
@@ -128,3 +135,8 @@ After [target B]: verify [specific callers]
 ```
 
 Do not read source code in this skill unless a target cannot be resolved by `ix locate`.
+
+**Save step (only if `SAVE_PATH` is non-empty):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.

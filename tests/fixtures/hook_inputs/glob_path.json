@@ -1,0 +1,9 @@
+{
+  "tool_name": "Glob",
+  "tool_input": {
+    "pattern": "**/*.ts",
+    "path": "src/"
+  },
+  "cwd": "/home/user/myrepo",
+  "session_id": "test-session-001"
+}

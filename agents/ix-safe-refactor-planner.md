@@ -27,7 +27,7 @@ If it returns JSON with a `revision` field, Pro is available. Extract `activePla
 
 Parse the input as a list of targets (files or symbols). If the input is a description, first resolve:
 ```bash
-ix locate "$INPUT" --limit 5 --format json
+ix locate "$INPUT" --format json
 ix text   "$INPUT" --limit 10 --format json
 ```
 
@@ -61,7 +61,7 @@ Rank targets: `critical` > `high` > `medium` > `low`.
 
 Find how the most important targets connect:
 ```bash
-ix trace <highest-risk> --to <second-target> --format json
+ix trace <highest-risk> --to <second-target> --depth 2 --format json
 ```
 
 This reveals whether targets form a pipeline (must be changed in order) or are independent (can be parallelized).

@@ -39,7 +39,7 @@ _ixe_fp() {
     | sed 's/[0-9]\+/N/g' \
     | sed 's|/[^/ ]*||g' \
     | cut -c1-120)
-  printf '%s' "$norm" | md5sum | cut -d' ' -f1
+  hash_string "$norm"
 }
 
 _ixe_store_mkdir() { mkdir -p "${IX_ERROR_STORE}" 2>/dev/null; }

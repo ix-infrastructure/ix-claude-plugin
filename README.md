@@ -13,6 +13,8 @@ Claude + Ix = reasoning engine + persistent code knowledge graph. Skills are cog
 
 Restart Claude Code after installing.
 
+After install, Claude is taught to prefer Ix for structural questions, hooks automatically front-run common search/edit paths with Ix context, and Claude appends a short final `Ix` section when hooks materially helped on that turn.
+
 ## Requirements
 
 - [Ix Memory](https://github.com/ix-infrastructure/Ix) installed and running (`ix status` returns ok)
@@ -61,15 +63,35 @@ Autonomous multi-step agents for complex tasks:
 
 | Trigger | Hook | Effect |
 |---------|------|--------|
-| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro** |
+| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**; also instructs Claude to append a short final `Ix` section when hooks helped |
 | Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Front-runs with `ix text` + `ix locate`/`ix inventory` |
-| Claude runs `Read` | `PreToolUse` → `ix-read.sh` | Front-runs with `ix inventory` + `ix overview` for the file |
 | Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts pattern, front-runs with `ix text` + `ix locate` |
 | Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | Runs `ix impact` before the edit |
 | Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Runs `ix map <file>` to update the graph |
+| Claude finishes responding | `Stop` → `ix-annotate.sh` | Emits a factual summary of how ix helped on that turn on non-`modelSuffix` channels |
 | Claude finishes responding | `Stop` → `ix-map.sh` (async) | Runs `ix map` to refresh the full graph |
 
+`hooks/ix-read.sh` remains in the repo as a disabled placeholder, but it is not registered in `hooks/hooks.json` and does not run at runtime.
+
 All hooks bail silently if `ix` is not in PATH or the backend is unreachable.
+
+## Debugging ix Hook Calls
+
+If you want to see exactly which `ix` CLI commands Claude-triggered hooks run, start Claude Code with `IX_DEBUG_LOG` set in its environment:
+
+```bash
+export IX_DEBUG_LOG=/tmp/ix-hooks.log
+tail -f /tmp/ix-hooks.log
+```
+
+The hooks will append lines like:
+
+```text
+[2026-04-19T12:34:56-0700] [ix-intercept] CMD ix text AuthService --limit 15 --format json --path src/
+[2026-04-19T12:34:56-0700] [ix-intercept] CMD ix locate AuthService --format json
+```
+
+`CMD ...` lines are the exact shell-escaped `ix` invocations. `INJECT ...` lines show the exact context a hook injected back into Claude.
 
 ## Uninstall
 

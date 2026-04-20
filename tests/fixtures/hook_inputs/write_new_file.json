@@ -1,0 +1,9 @@
+{
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/myrepo/src/newfile.ts",
+    "content": "export const x = 1;"
+  },
+  "cwd": "/home/user/myrepo",
+  "session_id": "test-session-001"
+}

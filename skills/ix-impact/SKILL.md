@@ -1,12 +1,19 @@
 ---
 name: ix-impact
 description: Change risk analysis — blast radius, affected systems, and what to test. Depth scales with risk level; low-risk targets stop early.
-argument-hint: <symbol or file>
+argument-hint: <symbol or file path to assess change risk for> [--save [path]]
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
 
 Check `command -v ix` first. If unavailable, use Grep to find all usages and estimate impact manually.
+
+## Argument parsing
+
+Strip `--save` and any following path token from `$ARGUMENTS` before resolving the target.
+- If `--save <path>` is present, set `SAVE_PATH` to that path.
+- If `--save` is present without a path, auto-generate `ix-impact-<target-slug>.md` in cwd (target slug = the target with spaces and slashes replaced by `-`).
+- If `--save` is absent, `SAVE_PATH` is empty — do not write a file.
 
 ## Pro check (optional)
 
@@ -45,7 +52,7 @@ This caveat applies regardless of the `ix impact` risk classification.
 
 Run in parallel:
 ```bash
-ix callers  $ARGUMENTS --limit 20 --format json
+ix callers  $ARGUMENTS --limit 15 --format json
 ix depends  $ARGUMENTS --depth 2 --format json
 ```
 
@@ -98,3 +105,8 @@ ix bugs --format json
 Cross-reference open bugs against the direct callers and dependents identified in Phase 2. Any open bug touching the blast radius escalates the risk verdict — flag it explicitly in the output.
 
 Never read source code in this skill. Risk analysis is purely graph-based.
+
+**Save step (only if `SAVE_PATH` is non-empty):**
+- Write the full output above to `SAVE_PATH` using the Write tool.
+- Confirm to the user: `Saved to <SAVE_PATH>`.
+- Do not write the file if `--save` was not passed.
