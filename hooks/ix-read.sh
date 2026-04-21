@@ -51,7 +51,7 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 _now=$(date +%s)
 ix_health_check
-_t0=$(date +%s%3N 2>/dev/null || echo 0)
+_t0=$(ix_now_ms)
 
 # ── Per-file TTL cache (5 min) — avoid repeating context for the same file ───
 IX_READ_CACHE_DIR="${TMPDIR:-/tmp}/ix-read-cache"
@@ -167,7 +167,7 @@ CONTEXT="[${_cmds}] ${FILENAME}"
 CONTEXT="${CONTEXT} | ${READ_HINT}"
 [ -n "$CONF_WARN" ]   && CONTEXT="${CONF_WARN} | ${CONTEXT}"
 
-_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_ledger_append "PreToolUse" "Read" "${#CONTEXT}" "inventory,overview,impact" "${_confidence:-1}" "${RISK_LEVEL:-}" "$_elapsed_ms"
 
 if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then

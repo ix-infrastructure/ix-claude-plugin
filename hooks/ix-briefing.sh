@@ -44,7 +44,7 @@ fi
 # ── Health + pro check ────────────────────────────────────────────────────────
 ix_health_check
 IX_HOOK_NAME="ix-briefing"
-_t0=$(date +%s%3N 2>/dev/null || echo 0)
+_t0=$(ix_now_ms)
 ix_log "ENTRY mode=${_mode:-off} channel=${_channel:-?} fresh=${_briefing_fresh}"
 BRIEFING=""
 if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
@@ -67,7 +67,7 @@ else
   ix_log "SKIP briefing (no Pro or failed)"
 fi
 
-_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 
 _context=""
 if [ -n "$BRIEFING" ]; then

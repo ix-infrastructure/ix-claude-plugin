@@ -32,7 +32,7 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-bash"
-_t0=$(date +%s%3N 2>/dev/null || echo 0)
+_t0=$(ix_now_ms)
 ix_log "ENTRY command='${COMMAND:0:80}'"
 ix_log "SEARCH command='${SEARCH_CMD:0:80}'"
 
@@ -72,7 +72,7 @@ CONTEXT="[ix] bash grep intercepted for '${PATTERN}'"
 [ -n "$TEXT_PART" ] && CONTEXT="${CONTEXT} | ${TEXT_PART}"
 CONTEXT="${CONTEXT} | Prefer: ix text '${PATTERN}' or ix locate '${PATTERN}' over shell grep"
 
-_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_log "DECISION augment ${#CONTEXT} chars (${_elapsed_ms}ms)"
 ix_log_injection "additionalContext" "$CONTEXT"
 ix_ledger_append "PreToolUse" "Bash" "${#CONTEXT}" "text,locate" "1" "" "$_elapsed_ms" \

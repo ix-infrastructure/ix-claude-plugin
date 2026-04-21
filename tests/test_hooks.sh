@@ -994,6 +994,131 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# ix_now_ms: poisoned-cache regression
+# ═════════════════════════════════════════════════════════════════════════════
+# Guards against a previously-shipped regression where `date +%s%3N` on macOS
+# BSD `date` emits a literal `...3N` suffix and caused
+# `$(( $(ix_now_ms) - _t0 ))` to abort under `set -euo pipefail`.
+# Writing `gnu_date` into the cache simulates BOTH a dotfile/env poisoning
+# attack and a cache that became stale when the user switched platforms.
+# The hook must still exit 0 and produce valid output regardless.
+section "ix_now_ms poisoned cache"
+
+_poison_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixpoisonXXXXXX)
+_poison_cache_dir="${_poison_tmp}/ix-plugin-cache-$(id -u)"
+mkdir -p "${_poison_cache_dir}"
+chmod 700 "${_poison_cache_dir}"
+printf '%s\n' "gnu_date" > "${_poison_cache_dir}/now-ms-backend"
+
+_poison_name="ix_now_ms/poisoned gnu_date backend degrades gracefully"
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_poison_tmp}" \
+  IX_HEALTH_CACHE="${_poison_tmp}/ix-healthy" \
+  IX_MAP_DEBOUNCE_FILE="${_poison_tmp}/ix-map-last" \
+  IX_MAP_LOCK_PATH="${_poison_tmp}/ix-map.lock" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
+
+if [ "${_RC}" -ne 0 ]; then
+  fail "${_poison_name}" "expected exit 0 under poisoned cache, got ${_RC}"
+else
+  pass "${_poison_name}"
+fi
+rm -rf "${_poison_tmp}"
+
+# FIFO at the cache path must not hang a hook. A plain `cat` on a FIFO with no
+# writer blocks forever; `ix_now_ms` guards with `-f` + `! -L` and `head -c`
+# so the hook should ignore the FIFO, probe fresh, and return within seconds.
+_fifo_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixfifoXXXXXX)
+_fifo_cache_dir="${_fifo_tmp}/ix-plugin-cache-$(id -u)"
+mkdir -p "${_fifo_cache_dir}"
+chmod 700 "${_fifo_cache_dir}"
+mkfifo "${_fifo_cache_dir}/now-ms-backend"
+
+_fifo_name="ix_now_ms/FIFO at cache path does not block"
+_fifo_t0=$(date +%s)
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_fifo_tmp}" \
+  IX_HEALTH_CACHE="${_fifo_tmp}/ix-healthy" \
+  IX_MAP_DEBOUNCE_FILE="${_fifo_tmp}/ix-map-last" \
+  IX_MAP_LOCK_PATH="${_fifo_tmp}/ix-map.lock" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
+_fifo_elapsed=$(( $(date +%s) - _fifo_t0 ))
+
+if [ "${_fifo_elapsed}" -ge 3 ]; then
+  fail "${_fifo_name}" "hook took ${_fifo_elapsed}s — likely blocked reading FIFO"
+elif [ "${_RC}" -ne 0 ]; then
+  fail "${_fifo_name}" "expected exit 0, got ${_RC}"
+else
+  pass "${_fifo_name}"
+fi
+rm -rf "${_fifo_tmp}"
+
+# Symlink at the cache path must be ignored (not followed and read).
+_sym_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixsymXXXXXX)
+_sym_cache_dir="${_sym_tmp}/ix-plugin-cache-$(id -u)"
+mkdir -p "${_sym_cache_dir}"
+chmod 700 "${_sym_cache_dir}"
+ln -s /etc/passwd "${_sym_cache_dir}/now-ms-backend"
+
+_sym_name="ix_now_ms/symlink at cache path is rejected"
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_sym_tmp}" \
+  IX_HEALTH_CACHE="${_sym_tmp}/ix-healthy" \
+  IX_MAP_DEBOUNCE_FILE="${_sym_tmp}/ix-map-last" \
+  IX_MAP_LOCK_PATH="${_sym_tmp}/ix-map.lock" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
+
+if [ "${_RC}" -ne 0 ]; then
+  fail "${_sym_name}" "expected exit 0 under symlinked cache, got ${_RC}"
+else
+  pass "${_sym_name}"
+fi
+rm -rf "${_sym_tmp}"
+
+# Cache directory pre-created as a symlink simulates a co-tenant pointing
+# our cache location at a directory they control. `ix_now_ms` must detect
+# this (via `! -L` on the dir), disable the cache, and still return a valid
+# timestamp by probing inline.
+_hijack_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixhijackXXXXXX)
+_hijack_target=$(mktemp -d 2>/dev/null || mktemp -d -t ixhijacktgtXXXXXX)
+ln -s "${_hijack_target}" "${_hijack_tmp}/ix-plugin-cache-$(id -u)"
+
+_hijack_name="ix_now_ms/symlinked cache dir disables cache safely"
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_hijack_tmp}" \
+  IX_HEALTH_CACHE="${_hijack_tmp}/ix-healthy" \
+  IX_MAP_DEBOUNCE_FILE="${_hijack_tmp}/ix-map-last" \
+  IX_MAP_LOCK_PATH="${_hijack_tmp}/ix-map.lock" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
+
+if [ "${_RC}" -ne 0 ]; then
+  fail "${_hijack_name}" "expected exit 0 under symlinked cache dir, got ${_RC}"
+else
+  pass "${_hijack_name}"
+fi
+rm -rf "${_hijack_tmp}" "${_hijack_target}"
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════\n'

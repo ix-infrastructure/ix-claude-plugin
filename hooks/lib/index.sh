@@ -14,7 +14,7 @@
 #
 # Exports (via ix-lib.sh):
 #   IX_HEALTH_CACHE, IX_PRO_CACHE
-#   ix_health_check, ix_check_pro
+#   ix_health_check, ix_check_pro, ix_now_ms
 #   parse_json, ix_run_text_locate, ix_summarize_text, ix_summarize_locate
 #
 # Exports (via ix-ledger.sh):

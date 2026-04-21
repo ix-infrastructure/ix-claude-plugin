@@ -27,6 +27,129 @@
 IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
 IX_PRO_CACHE="${TMPDIR:-/tmp}/ix-pro"
 
+# ── Portable millisecond timestamp ───────────────────────────────────────────
+# Usage: ix_now_ms
+# Writes a millisecond unix timestamp to stdout. Never fails: every call
+# validates the backend's output and falls through to seconds*1000 if the
+# chosen backend misbehaves, so `$(( $(ix_now_ms) - _t0 ))` is always safe
+# even under `set -euo pipefail`.
+#
+# Why this exists: `date +%s%3N` uses the GNU `%3N` extension. On macOS BSD
+# `date`, `%N` is not recognized and the literal `3N` is appended to the
+# seconds field (e.g. `17767202223N`), which breaks bash arithmetic.
+#
+# Design constraints:
+#   - Hooks call this twice per invocation (entry + exit) via command
+#     substitution, which runs in a subshell. Shell-local cache state set
+#     inside `ix_now_ms` does not propagate back to the parent process.
+#   - Exporting the backend as an env var would let subshells skip the probe,
+#     but it also lets an attacker or a stray dotfile poison the choice (e.g.
+#     `_IX_NOW_MS_BACKEND=gnu_date` on macOS reintroduces the `...3N` bug).
+#   - Probing at source time penalises hooks that exit early when `ix` is
+#     missing and never call `ix_now_ms` at all.
+#
+# Solution: cache the probe result in a file under `$TMPDIR` (same pattern
+# as `IX_HEALTH_CACHE`). Cache survives across hook invocations so the probe
+# runs at most once per user session, and reading it is cheap enough to do
+# from every subshell. Callers never read the backend from the environment.
+#
+# Backend preference (descending by speed / precision):
+#   1. `$EPOCHREALTIME`     — bash 5+ built-in, no subprocess, µs precision.
+#   2. GNU `date +%s%3N`    — Linux default; validated to reject BSD's `...N`.
+#   3. `gdate +%s%3N`       — macOS with `coreutils` installed.
+#   4. `perl -MTime::HiRes` — ships with macOS base; ms precision.
+#   5. `date +%s` × 1000    — final fallback; seconds-only precision.
+# Cache the probe result in a per-user private directory rather than a
+# world-visible name like `${TMPDIR}/ix-now-ms-backend`. A shared path is
+# subject to TOCTOU races where another local process can swap the file
+# between stat and open. Using a directory that only the current user can
+# write to removes that attack surface entirely — once the dir is owned by
+# us, no other local user can create, replace, or link files inside it.
+# If the directory cannot be created or is not owned by us (e.g. a co-tenant
+# pre-created it on a shared /tmp), `IX_NOW_MS_CACHE` is cleared and the
+# cache is disabled; `ix_now_ms` then probes on each hook invocation.
+_IX_CACHE_DIR="${TMPDIR:-/tmp}/ix-plugin-cache-${UID:-$(id -u 2>/dev/null || echo 0)}"
+# Only spawn mkdir/chmod on the cold path; the warm path is an `-d` test.
+if [ ! -d "$_IX_CACHE_DIR" ]; then
+  mkdir -p "$_IX_CACHE_DIR" 2>/dev/null && chmod 700 "$_IX_CACHE_DIR" 2>/dev/null
+fi
+if [ -d "$_IX_CACHE_DIR" ] && [ -O "$_IX_CACHE_DIR" ] && [ ! -L "$_IX_CACHE_DIR" ]; then
+  IX_NOW_MS_CACHE="${_IX_CACHE_DIR}/now-ms-backend"
+else
+  IX_NOW_MS_CACHE=""
+fi
+
+_ix_select_now_ms_backend() {
+  local _out
+  if [ -n "${EPOCHREALTIME-}" ]; then
+    printf '%s\n' "epochrealtime"; return 0
+  fi
+  if _out=$(date +%s%3N 2>/dev/null) && [[ "$_out" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "gnu_date"; return 0
+  fi
+  if command -v gdate >/dev/null 2>&1 \
+     && _out=$(gdate +%s%3N 2>/dev/null) && [[ "$_out" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "gdate"; return 0
+  fi
+  if command -v perl >/dev/null 2>&1 \
+     && _out=$(perl -MTime::HiRes=time -e 'printf "%.0f", time*1000' 2>/dev/null) \
+     && [[ "$_out" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "perl"; return 0
+  fi
+  printf '%s\n' "seconds"
+}
+
+ix_now_ms() {
+  local _backend _out
+  # Only read the cache if it is a plain regular file and not a symlink. The
+  # parent directory is user-owned (see `_IX_CACHE_DIR` setup), so these
+  # checks close a vanishingly small TOCTOU window and also defend against a
+  # pre-existing file left by an earlier run that somehow became a FIFO or
+  # symlink. `head -c` caps the read so a pathological file cannot block or
+  # exhaust memory.
+  if [ -n "$IX_NOW_MS_CACHE" ] && [ -f "$IX_NOW_MS_CACHE" ] && [ ! -L "$IX_NOW_MS_CACHE" ]; then
+    _backend=$(head -c 32 "$IX_NOW_MS_CACHE" 2>/dev/null | tr -d '[:space:]' || true)
+  fi
+  if [ -z "${_backend:-}" ]; then
+    _backend=$(_ix_select_now_ms_backend)
+    # Write via a sibling tempfile + rename so we never open the cache path
+    # itself for writing. `printf > FIFO` would block waiting for a reader,
+    # hanging every hook; `mv` atomically replaces the FIFO/symlink/regular
+    # file with our tempfile instead. Content is deterministic (one of 5
+    # known strings), so concurrent writers are idempotent.
+    if [ -n "$IX_NOW_MS_CACHE" ]; then
+      local _tmp_cache
+      _tmp_cache=$(mktemp "${IX_NOW_MS_CACHE}.XXXXXX" 2>/dev/null) && {
+        { printf '%s\n' "$_backend" > "$_tmp_cache"; } 2>/dev/null \
+          && mv -f "$_tmp_cache" "$IX_NOW_MS_CACHE" 2>/dev/null \
+          || rm -f "$_tmp_cache" 2>/dev/null
+      } || true
+    fi
+  fi
+
+  case "$_backend" in
+    epochrealtime)
+      if [ -n "${EPOCHREALTIME-}" ]; then
+        local _er="${EPOCHREALTIME/./}"
+        _out="${_er:0:13}"
+      fi
+      ;;
+    gnu_date) _out=$(date +%s%3N 2>/dev/null || true) ;;
+    gdate)    _out=$(gdate +%s%3N 2>/dev/null || true) ;;
+    perl)     _out=$(perl -MTime::HiRes=time -e 'printf "%.0f", time*1000' 2>/dev/null || true) ;;
+  esac
+
+  if [[ "${_out:-}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$_out"; return 0
+  fi
+
+  # Always-safe fallback: seconds × 1000. Catches a poisoned cache, a backend
+  # that stopped working after cache was written, or a bad env override.
+  _out=$(date +%s 2>/dev/null || echo 0)
+  [[ "$_out" =~ ^[0-9]+$ ]] || _out=0
+  printf '%s\n' "$(( _out * 1000 ))"
+}
+
 # ── Portable hash helper ──────────────────────────────────────────────────────
 # Usage: hash_string "some string"
 # Writes a lowercase hex digest to stdout. Tries md5sum (Linux), md5 -q (macOS),

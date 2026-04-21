@@ -32,7 +32,7 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-pre-edit"
-_t0=$(date +%s%3N 2>/dev/null || echo 0)
+_t0=$(ix_now_ms)
 ix_log "ENTRY tool=$TOOL file=$FILE_PATH"
 
 # ── Run impact on the file ────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ WARNING="${PREFIX} — ${FILENAME} has ${EFFECTIVE_DEPS} dependents. ${RISK_SUMM
 [ -n "$TOP_MEMBERS" ] && WARNING="${WARNING} Hot spots: ${TOP_MEMBERS}."
 [ -n "$NEXT_STEP" ]   && WARNING="${WARNING} → ${NEXT_STEP}"
 
-_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_log "DECISION warn risk=$RISK_LEVEL deps=$EFFECTIVE_DEPS (${_elapsed_ms}ms)"
 ix_ledger_append "PreToolUse" "Edit" "${#WARNING}" "impact" "1" "${RISK_LEVEL:-}" "$_elapsed_ms" \
   "checked impact for ${FILENAME} and flagged ${RISK_LEVEL} risk across ${EFFECTIVE_DEPS} dependents."

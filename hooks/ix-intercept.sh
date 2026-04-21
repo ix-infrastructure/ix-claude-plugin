@@ -24,7 +24,7 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-intercept"
-_t0=$(date +%s%3N 2>/dev/null || echo 0)
+_t0=$(ix_now_ms)
 ix_log "ENTRY tool=$TOOL"
 
 # ── Grep: text/symbol search ──────────────────────────────────────────────────
@@ -155,7 +155,7 @@ fi
 
 [ -z "${CONTEXT:-}" ] && exit 0
 
-_elapsed_ms=$(( $(date +%s%3N 2>/dev/null || echo 0) - _t0 ))
+_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 if [ "$TOOL" = "Grep" ]; then
   if [ "$HOOK_MODE" = "block" ]; then
     REASON="[ix text + ix locate] '${PATTERN}'"
