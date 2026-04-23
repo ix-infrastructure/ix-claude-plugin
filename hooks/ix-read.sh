@@ -51,7 +51,6 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 _now=$(date +%s)
 ix_health_check
-_t0=$(ix_now_ms)
 
 # ── Per-file TTL cache (5 min) — avoid repeating context for the same file ───
 IX_READ_CACHE_DIR="${TMPDIR:-/tmp}/ix-read-cache"
@@ -86,6 +85,7 @@ _ov_err=$(mktemp)
 _imp_err=$(mktemp)
 trap 'rm -f "$_inv_tmp" "$_ov_tmp" "$_imp_tmp" "$_inv_err" "$_ov_err" "$_imp_err"' EXIT
 
+_t0=$(ix_now_ms)
 ix inventory --kind file --path "$REL_PATH" --format json > "$_inv_tmp" 2>"$_inv_err" &
 _INV_PID=$!
 ix overview "$REL_PATH" --format json                     > "$_ov_tmp"  2>"$_ov_err"  &

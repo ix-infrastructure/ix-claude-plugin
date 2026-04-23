@@ -44,12 +44,13 @@ fi
 # ── Health + pro check ────────────────────────────────────────────────────────
 ix_health_check
 IX_HOOK_NAME="ix-briefing"
-_t0=$(ix_now_ms)
+_t0=""
 ix_log "ENTRY mode=${_mode:-off} channel=${_channel:-?} fresh=${_briefing_fresh}"
 BRIEFING=""
 if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   ix_log "RUN ix briefing (stale, Pro available)"
   ix_log_command ix briefing --format json
+  _t0=$(ix_now_ms)
   _bfr_err=$(mktemp)
   BRIEFING=$(ix briefing --format json 2>"$_bfr_err") || {
     _exit=$?
@@ -67,7 +68,8 @@ else
   ix_log "SKIP briefing (no Pro or failed)"
 fi
 
-_elapsed_ms=$(( $(ix_now_ms) - _t0 ))
+_elapsed_ms=0
+[ -n "$_t0" ] && _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 
 _context=""
 if [ -n "$BRIEFING" ]; then

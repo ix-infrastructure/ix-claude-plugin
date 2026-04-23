@@ -24,7 +24,6 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-intercept"
-_t0=$(ix_now_ms)
 ix_log "ENTRY tool=$TOOL"
 
 # ── Grep: text/symbol search ──────────────────────────────────────────────────
@@ -47,6 +46,7 @@ if [ "$TOOL" = "Grep" ]; then
   LANG_ARG=$(echo "$INPUT" | jq -r '.tool_input.type // empty')
 
   ix_log "RUN ix text+locate pattern='$PATTERN' path='${PATH_ARG:-}' lang='${LANG_ARG:-}'"
+  _t0=$(ix_now_ms)
   ix_run_text_locate "$PATTERN" "$PATH_ARG" "$LANG_ARG"
 
   [ -z "$_TEXT_RAW" ] && [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix results"; exit 0; }
@@ -118,6 +118,7 @@ elif [ "$TOOL" = "Glob" ]; then
 
   ix_log "RUN ix inventory raw_path='$PATH_ARG' normalized_path='$INV_PATH' cwd='${CWD:-${PWD:-}}'"
   ix_log_command ix inventory "${INV_ARGS[@]}"
+  _t0=$(ix_now_ms)
   _inv_err=$(mktemp)
   INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || {
     _exit=$?

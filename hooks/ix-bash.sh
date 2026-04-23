@@ -32,7 +32,6 @@ source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-bash"
-_t0=$(ix_now_ms)
 ix_log "ENTRY command='${COMMAND:0:80}'"
 ix_log "SEARCH command='${SEARCH_CMD:0:80}'"
 
@@ -56,6 +55,7 @@ ix_log "PATTERN extracted='$PATTERN'"
 
 # ── Run ix text + ix locate in parallel ───────────────────────────────────────
 ix_log "RUN ix text+locate pattern='$PATTERN'"
+_t0=$(ix_now_ms)
 ix_run_text_locate "$PATTERN"
 
 [ -z "$_TEXT_RAW" ] && [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix results"; exit 0; }
