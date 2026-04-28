@@ -994,6 +994,68 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# ix-bash.sh: pattern extraction regex portability
+# ═════════════════════════════════════════════════════════════════════════════
+# Guards against a regression where the sed regexes in `hooks/ix-bash.sh`
+# used GNU-only `\s` / `\S` escapes. On macOS BSD sed those are treated as
+# literal characters, the regexes silently fail to match whitespace, and
+# `PATTERN` falls back to the full `SEARCH_CMD` instead of just the grep
+# argument — leading to bogus `ix text + ix locate` queries on every
+# macOS Bash grep/rg intercept. The hook is invoked directly here (not via
+# `run_hook`) to bypass the harness's pre-existing `mktemp -d -p` failures
+# on BSD mktemp; this section therefore runs on both Linux and macOS.
+section "ix-bash.sh pattern extraction"
+
+_ext_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixextXXXXXX)
+
+# _ext_case <label> <command> <expected_pattern_or_empty>
+# - expected_pattern non-empty → assert IX_DEBUG_LOG contains
+#   `PATTERN extracted='<expected>'` exactly
+# - expected_pattern empty     → assert hook produced no stdout (skip path)
+_ext_case() {
+  local _label="$1" _cmd="$2" _expected_pattern="$3"
+  local _fx="${_ext_tmp}/input.json"
+  local _log="${_ext_tmp}/ix.log"
+  : > "$_log"
+  jq -n --arg c "$_cmd" '{"tool_name":"Bash","tool_input":{"command":$c},"cwd":"/tmp"}' > "$_fx"
+  local _out
+  _out=$(env \
+    TMPDIR="${_ext_tmp}" \
+    IX_HEALTH_CACHE="${_ext_tmp}/ix-healthy" \
+    IX_LEDGER_MODE="off" \
+    IX_INGEST_INJECT="off" \
+    IX_ERROR_MODE="off" \
+    IX_DEBUG_LOG="${_log}" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/ix-bash.sh" < "$_fx" 2>/dev/null) || true
+  if [ -z "$_expected_pattern" ]; then
+    if [ -z "$_out" ]; then
+      pass "$_label"
+    else
+      fail "$_label" "expected no output, got: ${_out:0:120}"
+    fi
+  else
+    if grep -qF "PATTERN extracted='${_expected_pattern}'" "$_log"; then
+      pass "$_label"
+    else
+      local _actual
+      _actual=$(grep -F "PATTERN extracted=" "$_log" | tail -1)
+      fail "$_label" "expected 'PATTERN extracted=${_expected_pattern}'; got: ${_actual:-<none>}"
+    fi
+  fi
+}
+
+_ext_case "bash-pattern/double-quoted"   'grep "AuthService" src/'  "AuthService"
+_ext_case "bash-pattern/single-quoted"   "grep 'AuthService' src/"  "AuthService"
+_ext_case "bash-pattern/unquoted-flags"  'grep -rn AuthService src/' "AuthService"
+_ext_case "bash-pattern/rg-equals-flag"  'rg --type=ts AuthService'  "AuthService"
+_ext_case "bash-pattern/rg-bare"         'rg AuthService'            "AuthService"
+_ext_case "bash-pattern/multiword"       'grep "hello world" docs/'  "hello world"
+_ext_case "bash-pattern/short-skips"     'grep ab /tmp/foo'          ""
+
+rm -rf "${_ext_tmp}"
+
+# ═════════════════════════════════════════════════════════════════════════════
 # ix_now_ms: poisoned-cache regression
 # ═════════════════════════════════════════════════════════════════════════════
 # Guards against a previously-shipped regression where `date +%s%3N` on macOS
