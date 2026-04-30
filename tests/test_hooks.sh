@@ -1001,9 +1001,11 @@ fi
 # literal characters, the regexes silently fail to match whitespace, and
 # `PATTERN` falls back to the full `SEARCH_CMD` instead of just the grep
 # argument — leading to bogus `ix text + ix locate` queries on every
-# macOS Bash grep/rg intercept. The hook is invoked directly here (not via
-# `run_hook`) to bypass the harness's pre-existing `mktemp -d -p` failures
-# on BSD mktemp; this section therefore runs on both Linux and macOS.
+# macOS Bash grep/rg intercept. Also guards against greedy quoted-argument
+# extraction selecting a later quoted path or glob instead of the actual
+# search pattern. The hook is invoked directly here (not via `run_hook`) to
+# bypass the harness's pre-existing `mktemp -d -p` failures on BSD mktemp;
+# this section therefore runs on both Linux and macOS.
 section "ix-bash.sh pattern extraction"
 
 _ext_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t ixextXXXXXX)
@@ -1051,6 +1053,8 @@ _ext_case "bash-pattern/unquoted-flags"  'grep -rn AuthService src/' "AuthServic
 _ext_case "bash-pattern/rg-equals-flag"  'rg --type=ts AuthService'  "AuthService"
 _ext_case "bash-pattern/rg-bare"         'rg AuthService'            "AuthService"
 _ext_case "bash-pattern/multiword"       'grep "hello world" docs/'  "hello world"
+_ext_case "bash-pattern/quoted-path"     'grep "AuthService" "docs/api spec.md"' "AuthService"
+_ext_case "bash-pattern/quoted-glob"     'rg "AuthService" --glob "*.ts"' "AuthService"
 _ext_case "bash-pattern/short-skips"     'grep ab /tmp/foo'          ""
 
 rm -rf "${_ext_tmp}"

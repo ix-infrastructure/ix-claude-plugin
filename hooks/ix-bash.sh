@@ -37,9 +37,9 @@ ix_log "SEARCH command='${SEARCH_CMD:0:80}'"
 
 # ── Extract search pattern from command ────────────────────────────────────────
 PATTERN=""
-PATTERN=$(echo "$SEARCH_CMD" | sed -E 's/.*[[:space:]]"([^"]+)".*/\1/' 2>/dev/null) || PATTERN=""
+PATTERN=$(echo "$SEARCH_CMD" | sed -E 's/^[^"]*[[:space:]]"([^"]+)".*/\1/' 2>/dev/null) || PATTERN=""
 if [ -z "$PATTERN" ] || [ "$PATTERN" = "$SEARCH_CMD" ]; then
-  PATTERN=$(echo "$SEARCH_CMD" | sed -E "s/.*[[:space:]]'([^']+)'.*/\1/" 2>/dev/null) || PATTERN=""
+  PATTERN=$(echo "$SEARCH_CMD" | sed -E "s/^[^']*[[:space:]]'([^']+)'.*/\\1/" 2>/dev/null) || PATTERN=""
 fi
 if [ -z "$PATTERN" ] || [ "$PATTERN" = "$SEARCH_CMD" ]; then
   PATTERN=$(echo "$SEARCH_CMD" | sed -E 's/^[[:space:]]*(grep|rg)[[:space:]]+(-[a-zA-Z0-9]+[[:space:]]+|--[a-zA-Z-]+=[^[:space:]]+[[:space:]]+)*([^-][^ ]*).*/\3/' 2>/dev/null) || PATTERN=""
