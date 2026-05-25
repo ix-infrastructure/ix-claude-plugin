@@ -31,14 +31,35 @@ if [ -f "$IX_MAP_DEBOUNCE_FILE" ]; then
   fi
 fi
 
-# ── flock — skip if another map is already running ───────────────────────────
+# ── Lock — skip if another map is already running ────────────────────────────
+# Prefer flock on POSIX. Fall back to atomic mkdir on systems without flock
+# (e.g. Git Bash on Windows) so concurrent Stop hooks can't stampede ix map.
 IX_MAP_LOCK_PATH="${IX_MAP_LOCK_PATH:-${TMPDIR:-/tmp}/ix-map.lock}"
-if [ "$_skip_map" -eq 0 ] && command -v flock >/dev/null 2>&1; then
-  exec 9>"$IX_MAP_LOCK_PATH"
-  if ! flock -n 9; then
-    _skip_map=1
-    ix_log "SKIP lock held (another ix map running)"
-    ix_ledger_append "Stop" "map_skipped_lock" "0" "" "1" "" "0"
+IX_MAP_LOCK_DIR="${IX_MAP_LOCK_DIR:-${TMPDIR:-/tmp}/ix-map.lockdir}"
+if [ "$_skip_map" -eq 0 ]; then
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$IX_MAP_LOCK_PATH"
+    if ! flock -n 9; then
+      _skip_map=1
+      ix_log "SKIP lock held (another ix map running)"
+      ix_ledger_append "Stop" "map_skipped_lock" "0" "" "1" "" "0"
+    fi
+  else
+    # Clear stale lock from a dead process so a crashed hook doesn't wedge us.
+    if [ -d "$IX_MAP_LOCK_DIR" ] && [ -f "$IX_MAP_LOCK_DIR/pid" ]; then
+      _holder=$(cat "$IX_MAP_LOCK_DIR/pid" 2>/dev/null || echo "")
+      if [ -n "$_holder" ] && ! kill -0 "$_holder" 2>/dev/null; then
+        rm -rf "$IX_MAP_LOCK_DIR" 2>/dev/null || true
+      fi
+    fi
+    if mkdir "$IX_MAP_LOCK_DIR" 2>/dev/null; then
+      echo $$ > "$IX_MAP_LOCK_DIR/pid"
+      trap 'rm -rf "$IX_MAP_LOCK_DIR" 2>/dev/null || true' EXIT
+    else
+      _skip_map=1
+      ix_log "SKIP mkdir-lock held (another ix map running)"
+      ix_ledger_append "Stop" "map_skipped_lock" "0" "" "1" "" "0"
+    fi
   fi
 fi
 
