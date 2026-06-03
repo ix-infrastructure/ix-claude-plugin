@@ -43,7 +43,7 @@ If it returns JSON with a `revision` field, Pro is available. Note `recentDecisi
 ix subsystems --format llm
 ```
 
-Filter results to `$ARGUMENTS` scope if provided (match on subsystem name or path prefix). Store the full JSON as `SUBSYSTEMS`.
+Filter results to `$ARGUMENTS` scope if provided (match on subsystem name or path prefix). Store the full output as `SUBSYSTEMS`.
 
 **Early-stop gate:** Examine each region's metrics. If ALL of the following are true across every region:
 - `cohesion > 0.7`

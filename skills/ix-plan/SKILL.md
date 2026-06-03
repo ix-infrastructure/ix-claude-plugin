@@ -57,7 +57,7 @@ Rank targets by risk level: critical > high > medium > low.
    - Spawn `ix-safe-refactor-planner` with pre-filled context:
      - **TARGETS**: the resolved symbol list from Phase 1
      - **RISK_TABLE**: the ranked table from Phase 2 (agent skips its own Steps 1–3)
-     - **SUBSYSTEMS**: subsystems JSON from step 2
+     - **SUBSYSTEMS**: subsystems output from step 2
    - Stop — the agent produces the full sequenced plan
 
 Otherwise continue inline with Phases 3–5.

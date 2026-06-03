@@ -97,7 +97,7 @@ If `FULL=true`, tell the user the planned mode, output path, and whether splitti
    - Full mode: method summaries only for key classes or services
 
 4. **No raw dumps**
-   - Never output raw JSON
+   - Never output raw command output
    - Never paste command logs
    - Never dump full file inventories, all callers, or all methods
 

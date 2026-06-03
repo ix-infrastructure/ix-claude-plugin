@@ -119,7 +119,7 @@ Do not assume the symbol does not exist. The graph may not cover it. Fall back t
 If recent edits have not been mapped (e.g., new files added, large refactor), run `ix map --silent` before relying on structural data. Staleness is most likely after bulk file changes.
 
 **When ix returns an error:**
-Exit the Ix query path gracefully. Do not surface raw error JSON. Fall back to native tools and note that the ix query failed.
+Exit the Ix query path gracefully. Do not surface raw error output. Fall back to native tools and note that the ix query failed.
 
 ---
 

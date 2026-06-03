@@ -86,7 +86,7 @@ Cross-reference callers + dependents + importers to identify:
 
 **Key callers:** [top 5, with subsystem label]
 
-**At-risk behaviors:** [from ix impact atRiskBehavior field]
+**At-risk behaviors:** [from the ix impact behavior lines]
 
 **Recommended action:**
 - low: proceed, verify [specific callers]
