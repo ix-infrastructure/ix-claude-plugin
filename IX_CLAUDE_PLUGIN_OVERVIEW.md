@@ -34,7 +34,11 @@ uses graph queries to understand structure and relationships without reading sou
 ## The ix CLI — What Each Command Does
 
 These are the commands Claude (and the hooks/skills) use to query the graph. All
-support `--format json` for machine-readable output.
+support `--format json` for machine-readable output and `--format llm` for
+token-optimized output read directly by the model. Skills/agents pass
+`--format llm`; hooks that parse the result with `jq` keep `--format json`.
+(Some command examples below still show `--format json` where they document
+hook-internal parsing — that is intentional.)
 
 ### Discovery / Architecture
 

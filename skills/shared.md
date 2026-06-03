@@ -37,7 +37,11 @@ Commands grouped by intent — use the cheapest group that answers the question.
 Required flags:
 - `ix rank` always requires `--by <metric>` and `--kind <kind>`
 - `ix inventory` requires `--kind <kind>`
-- Always pass `--format json` for structured output
+- Pass `--format llm` for token-optimized output you read directly (compact
+  `key=value` records, typically 2-4x smaller than json). Use `--format json`
+  only when you need to machine-parse the result (e.g. extract a field with a
+  tool). Pro commands (`briefing`, `bugs`, `decisions`, `plans`, `goals`, …)
+  still use `--format json`.
 
 ---
 
@@ -65,12 +69,12 @@ Pro features require an Ix Pro backend. Detect with: `ix briefing --format json 
 | Debug unexpected behavior | `/ix-debug <symptom>` |
 | Audit design health / smells | `/ix-architecture [scope]` |
 | Write onboarding or reference docs | `/ix-docs <target>` |
-| Find where a symbol is defined | `ix locate <symbol> --format json` |
-| Search when symbol name is fuzzy | `ix search <term> --limit 10 --format json` |
-| Find callers of a function | `ix callers <symbol> --limit 15 --format json` |
-| Find what a function calls | `ix callees <symbol> --limit 15 --format json` |
-| Find what imports a module | `ix imported-by <symbol> --format json` |
-| Check what a file exports | `ix overview <path> --format json` |
+| Find where a symbol is defined | `ix locate <symbol> --format llm` |
+| Search when symbol name is fuzzy | `ix search <term> --limit 10 --format llm` |
+| Find callers of a function | `ix callers <symbol> --limit 15 --format llm` |
+| Find what a function calls | `ix callees <symbol> --limit 15 --format llm` |
+| Find what imports a module | `ix imported-by <symbol> --format llm` |
+| Check what a file exports | `ix overview <path> --format llm` |
 | Not sure which to use | `/ix-help <task description>` |
 
 ---
@@ -115,7 +119,7 @@ Do not assume the symbol does not exist. The graph may not cover it. Fall back t
 If recent edits have not been mapped (e.g., new files added, large refactor), run `ix map --silent` before relying on structural data. Staleness is most likely after bulk file changes.
 
 **When ix returns an error:**
-Exit the Ix query path gracefully. Do not surface raw error JSON. Fall back to native tools and note that the ix query failed.
+Exit the Ix query path gracefully. Do not surface raw error output. Fall back to native tools and note that the ix query failed.
 
 ---
 
@@ -155,7 +159,7 @@ The skill runs `ix impact`, ranks dependents by severity, and tells you what to 
 
 **"What calls parse_json across the whole codebase?"**
 ```
-ix callers parse_json --limit 15 --format json
+ix callers parse_json --limit 15 --format llm
 ```
 Direct command — single structural question, no skill needed.
 
@@ -163,7 +167,7 @@ Direct command — single structural question, no skill needed.
 
 **"I'm new to this codebase. Where do I start?"**
 ```
-ix subsystems --format json    # get the top-level shape
+ix subsystems --format llm    # get the top-level shape
 /ix-understand <key subsystem> # build a mental model of the most relevant part
 ```
 
@@ -172,8 +176,8 @@ ix subsystems --format json    # get the top-level shape
 **"grep AuthService keeps returning too many results."**
 The Grep hook may already have blocked or augmented this with an ix locate result. Check if `[ix locate]` context appeared before the search. If not, run:
 ```
-ix locate AuthService --format json
-ix explain AuthService --format json
+ix locate AuthService --format llm
+ix explain AuthService --format llm
 ```
 Then use `ix read AuthService` only if the structural data is insufficient.
 

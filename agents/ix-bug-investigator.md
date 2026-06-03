@@ -18,13 +18,13 @@ Each iteration: gather evidence → form hypothesis → decide if you need more 
 
 Before tracing, build a lightweight `ix-docs`-style context:
 ```bash
-ix subsystems --format json
-ix locate "$SYMPTOM" --format json
+ix subsystems --format llm
+ix locate "$SYMPTOM" --format llm
 ```
 
 If the likely subsystem or boundary component is still unclear, add:
 ```bash
-ix overview <likely-subsystem-or-component> --format json
+ix overview <likely-subsystem-or-component> --format llm
 ```
 
 Use this only to answer:
@@ -35,8 +35,8 @@ Use this only to answer:
 ### Step 1 — Locate the entry point
 
 ```bash
-ix locate "$SYMPTOM" --format json
-ix text   "$SYMPTOM" --limit 10 --format json
+ix locate "$SYMPTOM" --format llm
+ix text   "$SYMPTOM" --limit 10 --format llm
 ```
 
 Run in parallel. Identify the most likely entry point — the function/class where the failure originates or first manifests.
@@ -46,7 +46,7 @@ If ambiguous: prefer the entity whose name/path most closely matches the symptom
 ### Step 2 — Explain the entry point
 
 ```bash
-ix explain <entry-point> --format json
+ix explain <entry-point> --format llm
 ```
 
 Classify what kind of entity this is:
@@ -59,7 +59,7 @@ Classify what kind of entity this is:
 ### Step 3 — Trace the execution path
 
 ```bash
-ix trace <entry-point> --downstream --depth 2 --format json
+ix trace <entry-point> --downstream --depth 2 --format llm
 ```
 
 Walk the downstream call chain. At each node, ask:
@@ -72,7 +72,7 @@ Form **hypothesis**: which 1–3 nodes are most suspicious?
 ### Step 4 — Verify with callers (if failure might come from upstream)
 
 ```bash
-ix callers <entry-point> --limit 15 --format json
+ix callers <entry-point> --limit 15 --format llm
 ```
 
 Check: is the entry point being called incorrectly? Wrong arguments, wrong state, wrong sequence?
@@ -81,7 +81,7 @@ Check: is the entry point being called incorrectly? Wrong arguments, wrong state
 
 Only for the top 1–2 suspects from Steps 3–4:
 ```bash
-ix read <suspect-function> --format json
+ix read <suspect-function> --format llm
 ```
 
 Look for: missing null checks, wrong assumptions about input format, incorrect state transitions, unhandled edge cases.

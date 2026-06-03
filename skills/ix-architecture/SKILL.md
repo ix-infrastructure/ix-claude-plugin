@@ -24,7 +24,7 @@ If either fails, stop: *"ix graph unavailable — run `ix connect` or check your
 
 Then verify the graph has data:
 ```bash
-ix subsystems --list --format json
+ix subsystems --list --format llm
 ```
 If the result is empty or returns an error, stop: *"No graph data yet — run `ix map` to build the graph first."*
 
@@ -40,10 +40,10 @@ If it returns JSON with a `revision` field, Pro is available. Note `recentDecisi
 ## Phase 1 — Subsystem structure
 
 ```bash
-ix subsystems --format json
+ix subsystems --format llm
 ```
 
-Filter results to `$ARGUMENTS` scope if provided (match on subsystem name or path prefix). Store the full JSON as `SUBSYSTEMS`.
+Filter results to `$ARGUMENTS` scope if provided (match on subsystem name or path prefix). Store the full output as `SUBSYSTEMS`.
 
 **Early-stop gate:** Examine each region's metrics. If ALL of the following are true across every region:
 - `cohesion > 0.7`
@@ -58,7 +58,7 @@ Filter results to `$ARGUMENTS` scope if provided (match on subsystem name or pat
 ## Phase 2 — Smell analysis
 
 ```bash
-ix smells --format json
+ix smells --format llm
 ```
 
 Filter to scope if `$ARGUMENTS` was provided. Store as `SMELLS`.
@@ -88,7 +88,7 @@ Run `ix rank` only if at least one of the following is true:
 - Any region in `SUBSYSTEMS` has `coupling > 0.5`
 
 ```bash
-ix rank --by dependents --kind class --top 10 --exclude-path test --format json
+ix rank --by dependents --kind class --top 10 --exclude-path test --format llm
 ```
 
 Identify the top-ranked components that overlap with smell findings or high-coupling regions. Include these as hotspots in the inline report.

@@ -32,8 +32,8 @@ Answer: *in what order should these changes be made, what will break, and what n
 If `$ARGUMENTS` contains symbol names, proceed.
 If `$ARGUMENTS` is a description (no identifiable symbols), first run:
 ```bash
-ix text "$ARGUMENTS" --limit 10 --format json
-ix locate "$ARGUMENTS" --format json
+ix text "$ARGUMENTS" --limit 10 --format llm
+ix locate "$ARGUMENTS" --format llm
 ```
 Identify the 1–4 most relevant symbols and treat those as targets.
 
@@ -41,8 +41,8 @@ Identify the 1–4 most relevant symbols and treat those as targets.
 
 For each identified target, run simultaneously:
 ```bash
-ix impact  <target> --format json
-ix callers <target> --limit 10 --format json
+ix impact  <target> --format llm
+ix callers <target> --limit 10 --format llm
 ```
 
 Rank targets by risk level: critical > high > medium > low.
@@ -52,12 +52,12 @@ Rank targets by risk level: critical > high > medium > low.
 **Delegation gate — high-complexity path:** If the fast path did not trigger, check for high complexity:
 
 1. From Phase 2 results: does any target have **dependents > 20**?
-2. If not already known, run `ix subsystems --format json` (reads cached data — cheap) and check if any non-low-risk target's region has **coupling > 5**
+2. If not already known, run `ix subsystems --format llm` (reads cached data — cheap) and check if any non-low-risk target's region has **coupling > 5**
 3. If either condition is true:
    - Spawn `ix-safe-refactor-planner` with pre-filled context:
      - **TARGETS**: the resolved symbol list from Phase 1
      - **RISK_TABLE**: the ranked table from Phase 2 (agent skips its own Steps 1–3)
-     - **SUBSYSTEMS**: subsystems JSON from step 2
+     - **SUBSYSTEMS**: subsystems output from step 2
    - Stop — the agent produces the full sequenced plan
 
 Otherwise continue inline with Phases 3–5.
@@ -66,7 +66,7 @@ Otherwise continue inline with Phases 3–5.
 
 Find how the targets connect:
 ```bash
-ix trace <highest-risk-target> --to <second-target> --depth 2 --format json
+ix trace <highest-risk-target> --to <second-target> --depth 2 --format llm
 ```
 
 Run for the most architecturally significant pair. Skip if targets are in independent subsystems.
@@ -74,7 +74,7 @@ Run for the most architecturally significant pair. Skip if targets are in indepe
 ## Phase 4 — Shared dependents (only if high/critical targets exist; skip if all low risk)
 
 ```bash
-ix depends <highest-risk-target> --depth 2 --format json
+ix depends <highest-risk-target> --depth 2 --format llm
 ```
 
 Identify if any third symbol depends on multiple targets (shared blast radius — highest testing priority).
