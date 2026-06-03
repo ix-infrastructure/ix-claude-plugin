@@ -27,16 +27,16 @@ If it returns JSON with a `revision` field, Pro is available. Extract `activePla
 
 Parse the input as a list of targets (files or symbols). If the input is a description, first resolve:
 ```bash
-ix locate "$INPUT" --format json
-ix text   "$INPUT" --limit 10 --format json
+ix locate "$INPUT" --format llm
+ix text   "$INPUT" --limit 10 --format llm
 ```
 
 Identify 2–5 concrete symbols or files. If the target set is ambiguous, take the 2–3 best-matching candidates by name or path and proceed — do not stop to ask.
 
 If the targets span unfamiliar or multiple subsystems, gather lightweight `ix-docs` context before impact analysis:
 ```bash
-ix subsystems --format json
-ix overview <highest-risk-or-most-central-target> --format json
+ix subsystems --format llm
+ix overview <highest-risk-or-most-central-target> --format llm
 ```
 
 Use that context to identify subsystem boundaries, shared infrastructure, and the right level for the change plan.
@@ -45,8 +45,8 @@ Use that context to identify subsystem boundaries, shared infrastructure, and th
 
 For every identified target, run simultaneously:
 ```bash
-ix impact  <target> --format json
-ix callers <target> --limit 15 --format json
+ix impact  <target> --format llm
+ix callers <target> --limit 15 --format llm
 ```
 
 Collect: risk level, direct dependent count, key callers by name and subsystem.
@@ -61,7 +61,7 @@ Rank targets: `critical` > `high` > `medium` > `low`.
 
 Find how the most important targets connect:
 ```bash
-ix trace <highest-risk> --to <second-target> --depth 2 --format json
+ix trace <highest-risk> --to <second-target> --depth 2 --format llm
 ```
 
 This reveals whether targets form a pipeline (must be changed in order) or are independent (can be parallelized).
@@ -69,7 +69,7 @@ This reveals whether targets form a pipeline (must be changed in order) or are i
 ### Step 4 — Shared dependents (if high/critical targets exist)
 
 ```bash
-ix depends <highest-risk-target> --depth 2 --format json
+ix depends <highest-risk-target> --depth 2 --format llm
 ```
 
 Find symbols that depend on **multiple** targets — these carry compounded risk and need testing after every change.
@@ -84,7 +84,7 @@ From the impact + callers data, identify:
 ### Step 6 — Code read (only if a target's role is unclear after graph analysis)
 
 ```bash
-ix read <unclear-target> --format json
+ix read <unclear-target> --format llm
 ```
 
 Use only to understand what a target *does* if ix explain was insufficient. Skip if roles are clear from the graph.

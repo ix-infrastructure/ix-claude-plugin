@@ -31,8 +31,8 @@ Answer: *what breaks if this changes, and is it safe to proceed?* Stop as early 
 
 Run in parallel:
 ```bash
-ix impact  $ARGUMENTS --format json
-ix explain $ARGUMENTS --format json
+ix impact  $ARGUMENTS --format llm
+ix explain $ARGUMENTS --format llm
 ```
 
 **God-module check:** If `fan_out > 20 AND fan_in < 2` in the `ix explain` result:
@@ -52,8 +52,8 @@ This caveat applies regardless of the `ix impact` risk classification.
 
 Run in parallel:
 ```bash
-ix callers  $ARGUMENTS --limit 15 --format json
-ix depends  $ARGUMENTS --depth 2 --format json
+ix callers  $ARGUMENTS --limit 15 --format llm
+ix depends  $ARGUMENTS --depth 2 --format llm
 ```
 
 Extract: direct callers by name and subsystem, transitive count.
@@ -63,7 +63,7 @@ Extract: direct callers by name and subsystem, transitive count.
 ## Phase 3 — Import chain and subsystem spread (high/critical only)
 
 ```bash
-ix imported-by $ARGUMENTS --format json
+ix imported-by $ARGUMENTS --format llm
 ```
 
 Cross-reference callers + dependents + importers to identify:

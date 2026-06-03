@@ -32,11 +32,11 @@ Work iteratively in expanding waves. Each step adds depth. Always proceed throug
 **Skip this step if orient data was provided in your prompt.**
 
 ```bash
-ix subsystems --format json
-ix subsystems --list --format json
-ix rank --by dependents --kind class --top 15 --exclude-path test --format json
-ix rank --by callers   --kind function --top 15 --exclude-path test --format json
-ix stats --format json
+ix subsystems --format llm
+ix subsystems --list --format llm
+ix rank --by dependents --kind class --top 15 --exclude-path test --format llm
+ix rank --by callers   --kind function --top 15 --exclude-path test --format llm
+ix stats --format llm
 ```
 
 Run all in parallel. From the results:
@@ -51,8 +51,8 @@ Stop condition: If the question is about overall architecture and this gives a c
 
 For EACH major system in scope (all systems if whole-repo, or the single system if scoped):
 ```bash
-ix overview <system> --format json
-ix contains <system> --format json
+ix overview <system> --format llm
+ix contains <system> --format llm
 ```
 
 Run in parallel batches. For each system, extract:
@@ -66,7 +66,7 @@ Stop condition: If you can describe the role, structure, and connections of each
 
 For the top 3-10 most important components in scope (use orient data or Step 2 results):
 ```bash
-ix explain <component> --format json
+ix explain <component> --format llm
 ```
 
 Run in parallel. For each, extract:
@@ -80,9 +80,9 @@ Stop condition: If you can describe the purpose and structural importance of eac
 
 For the 1-3 most important execution flows in scope:
 ```bash
-ix trace <entry-point> --downstream --depth 2 --format json
-ix callers <critical-function> --limit 15 --format json
-ix callees <critical-function> --limit 15 --format json
+ix trace <entry-point> --downstream --depth 2 --format llm
+ix callers <critical-function> --limit 15 --format llm
+ix callees <critical-function> --limit 15 --format llm
 ```
 
 Use these to reconstruct data flow diagrams. If the graph doesn't reveal enough, use `ix read <symbol>` for the key entry points to understand the pattern.
@@ -95,8 +95,8 @@ Stop condition: If you have at least one traced flow and understand the primary 
 
 Check for build/test infrastructure using graph data:
 ```bash
-ix inventory --kind file --path test --limit 10 --format json
-ix inventory --kind file --path cmd --limit 20 --format json
+ix inventory --kind file --path test --limit 10 --format llm
+ix inventory --kind file --path cmd --limit 20 --format llm
 ```
 
 If the graph doesn't cover build tooling, use Glob sparingly.
@@ -107,7 +107,7 @@ Stop condition: If build/test infrastructure is clear → proceed to Output.
 
 For at most 2 symbols where the graph left important patterns unclear:
 ```bash
-ix read <symbol> --format json
+ix read <symbol> --format llm
 ```
 
 Use this for: core type definitions, entry points, plugin registration patterns.

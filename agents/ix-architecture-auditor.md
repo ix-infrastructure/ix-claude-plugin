@@ -18,8 +18,8 @@ Work from broad to narrow. Each layer narrows the scope of concern.
 
 Run in parallel:
 ```bash
-ix subsystems --format json
-ix subsystems --list --format json
+ix subsystems --format llm
+ix subsystems --list --format llm
 ```
 
 Build the region hierarchy. Flag immediately:
@@ -32,7 +32,7 @@ Sort regions: worst health first.
 ### Step 2 — Smell detection
 
 ```bash
-ix smells --format json
+ix smells --format llm
 ```
 
 Classify each smell:
@@ -44,8 +44,8 @@ Classify each smell:
 
 Run only when Phase 1 or 2 reveals significant issues:
 ```bash
-ix rank --by dependents --kind class    --top 10 --exclude-path test --format json
-ix rank --by callers    --kind function --top 10 --exclude-path test --format json
+ix rank --by dependents --kind class    --top 10 --exclude-path test --format llm
+ix rank --by callers    --kind function --top 10 --exclude-path test --format llm
 ```
 
 Correlate: components that are both **highly central** and in **poorly-bounded subsystems** are the highest-risk change targets.
@@ -55,7 +55,7 @@ Correlate: components that are both **highly central** and in **poorly-bounded s
 If Step 1–3 identify one region as clearly the worst:
 ```bash
 ix subsystems <region> --explain
-ix smells --format json
+ix smells --format llm
 ```
 
 `ix smells` is repo-wide only. Filter the results by path prefix after retrieval for the region being audited.

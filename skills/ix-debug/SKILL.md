@@ -33,12 +33,12 @@ Answer: *where in the execution path is this likely failing, and why?* Stop once
 ## Phase 1 — Locate the entry point (always)
 
 ```bash
-ix locate $ARGUMENTS --format json
+ix locate $ARGUMENTS --format llm
 ```
 
 If `$ARGUMENTS` is a symptom description rather than a symbol name, also run:
 ```bash
-ix text "$ARGUMENTS" --limit 10 --format json
+ix text "$ARGUMENTS" --limit 10 --format llm
 ```
 
 Identify the most likely entry point (where the failure originates or first manifests).
@@ -46,7 +46,7 @@ Identify the most likely entry point (where the failure originates or first mani
 ## Phase 2 — Explain (always)
 
 ```bash
-ix explain <entry-point> --format json
+ix explain <entry-point> --format llm
 ```
 
 Extract: role, callers, callees, confidence. Identify whether this is:
@@ -79,7 +79,7 @@ If the Agent tool is unavailable, continue inline through Phases 4–6, reduce b
 ## Phase 4 — Trace the execution path (inline path)
 
 ```bash
-ix trace <entry-point> --downstream --depth 2 --format json
+ix trace <entry-point> --downstream --depth 2 --format llm
 ```
 
 Walk the downstream path. At each step, look for:
@@ -96,7 +96,7 @@ Walk the downstream path. At each step, look for:
 ## Phase 5 — Callers (inline path, if failure might come from upstream)
 
 ```bash
-ix callers <entry-point> --limit 10 --format json
+ix callers <entry-point> --limit 10 --format llm
 ```
 
 Check whether the fault is in how this is *called* rather than in its own logic.
@@ -105,7 +105,7 @@ Check whether the fault is in how this is *called* rather than in its own logic.
 
 For each root cause candidate (max 2):
 ```bash
-ix read <candidate-function> --format json
+ix read <candidate-function> --format llm
 ```
 
 Read **the specific function only**. Look for:

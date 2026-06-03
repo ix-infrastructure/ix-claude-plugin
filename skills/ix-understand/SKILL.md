@@ -24,11 +24,11 @@ Parse `$ARGUMENTS` before doing anything else:
 Run these commands **in parallel** to discover the architecture:
 
 ```bash
-ix subsystems --format json
-ix subsystems --list --format json
-ix rank --by dependents --kind class --top 15 --exclude-path test --format json
-ix rank --by callers --kind function --top 15 --exclude-path test --format json
-ix stats --format json
+ix subsystems --format llm
+ix subsystems --list --format llm
+ix rank --by dependents --kind class --top 15 --exclude-path test --format llm
+ix rank --by callers --kind function --top 15 --exclude-path test --format llm
+ix stats --format llm
 ```
 
 From the results, identify:
@@ -180,9 +180,9 @@ Include one additional **ix-system-explorer** agent in the same single message f
 > [Paste orient results]
 >
 > Using the graph, determine:
-> 1. **Core type system / data model** — what are the fundamental types shared across systems? Use `ix rank --by dependents --kind class --top 15 --exclude-path test --format json` and `ix explain` on the top 5.
+> 1. **Core type system / data model** — what are the fundamental types shared across systems? Use `ix rank --by dependents --kind class --top 15 --exclude-path test --format llm` and `ix explain` on the top 5.
 > 2. **Primary data flows** — trace 1-3 key execution paths end-to-end across system boundaries using `ix trace`. Produce ASCII diagrams.
-> 3. **Build & development infrastructure** — `ix inventory --kind file --path test --limit 10 --format json`, `ix inventory --kind file --path cmd --limit 20 --format json`, and Glob for build files if needed.
+> 3. **Build & development infrastructure** — `ix inventory --kind file --path test --limit 10 --format llm`, `ix inventory --kind file --path cmd --limit 20 --format llm`, and Glob for build files if needed.
 > 4. **Cross-system coupling hotspots** — which system pairs have the most edges between them?
 > 5. **Navigation shortcuts** — "To find X, look at Y" table for common tasks.
 > 6. **Where to go deeper** — specific ix commands for follow-up.
