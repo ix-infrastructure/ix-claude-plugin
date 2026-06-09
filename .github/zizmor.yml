@@ -1,0 +1,4 @@
+# zizmor configuration. All findings are fixed in-place (least-privilege
+# permissions + persist-credentials: false on every checkout), so there are
+# currently no accepted exceptions to record here.
+rules: {}

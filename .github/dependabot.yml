@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # This repo ships skills, hook scripts, and JSON manifests with no application
+  # package manager, so the only ecosystem to keep current is the pinned GitHub
+  # Actions in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
