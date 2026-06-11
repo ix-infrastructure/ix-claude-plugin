@@ -17,6 +17,12 @@ source "${_HOOK_DIR}/lib/index.sh" 2>/dev/null || true
 ix_health_check
 IX_HOOK_NAME="ix-map"
 
+# Mark this map as automatic (background refresh). The CLI skips an automatic
+# map when the active backend is remote — a shared remote graph should be fed
+# deliberately, not on every change from every client. Manual `ix map` is
+# unaffected. Users who want remote auto-refresh set IX_AUTO_MAP_CLOUD=1.
+export IX_AUTO_MAP=1
+
 # ── Debounce — skip if a map ran recently ────────────────────────────────────
 IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
 IX_MAP_DEBOUNCE_FILE="${TMPDIR:-/tmp}/ix-map-last"
