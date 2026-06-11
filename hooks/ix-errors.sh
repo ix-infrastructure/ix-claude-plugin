@@ -57,6 +57,17 @@ _ixe_store_local() {
     >> "${IX_ERROR_STORE}/errors.jsonl" 2>/dev/null
 }
 
+# ── Pro feature detection ─────────────────────────────────────────────────────
+# Returns 0 if the message/stderr is an expected "needs Ix Pro" prompt (shown
+# when Pro isn't installed) rather than a real error worth logging.
+_ixe_is_pro_feature_msg() {
+  case "$1 $2" in
+    *"requires Ix Pro"*|*"Install @ix/pro"*|*"is a Ix/pro feature"*|*"premium features"*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 # ── Public: capture and log locally (fire-and-forget) ─────────────────────────
 # Usage: ix_capture_async <type> <component> <message> <exit_code> [cmd_summary] [stderr]
 #   type: plugin | ix | integration | unknown
@@ -66,6 +77,10 @@ ix_capture_async() {
 
   local _type="$1" _comp="$2" _msg="${3:-unknown error}" \
         _ec="${4:-1}" _cmd="${5:-}" _stderr="${6:-}"
+
+  # Skip expected Pro feature messages — these are prompts shown when Pro isn't
+  # installed, not actual errors.
+  _ixe_is_pro_feature_msg "$_msg" "$_stderr" && return 0
 
   (
     set +e
