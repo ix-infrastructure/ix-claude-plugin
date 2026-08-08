@@ -86,7 +86,7 @@ If Pro is available (detected above):
 Check for existing plans and goals that overlap with this change:
 ```bash
 ix plans --format json
-ix goals --format json
+ix goal list --format json
 ```
 
 Cross-reference `activePlans` from the briefing to avoid duplicate work. If an existing plan covers these targets, reference it. If `activeGoals` exist, note which goal this change serves.
@@ -130,7 +130,7 @@ After [target B]: verify [specific callers]
 - [any cross-subsystem boundary being crossed]
 
 ## Project context **[Pro]**
-- Goal this serves: [from ix goals — omit if Pro unavailable]
+- Goal this serves: [from `ix goal list` — omit if Pro unavailable]
 - Existing plan to track against: [plan ID + title, or "none — suggest creating one"]
 ```
 

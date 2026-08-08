@@ -97,7 +97,7 @@ hook-internal parsing — that is intentional.)
 | `ix map` | Builds or refreshes the full code graph by parsing the current working directory. Expensive — runs async after edits. Do not run for exploration; use `ix subsystems` instead (reads cached data). |
 | `ix map <file>` | Updates the graph for a single file. Runs after Claude edits a file to keep the graph current. |
 | `ix status` | Health check — returns whether the ix server is running and reachable. Slow (6s+) — hooks avoid it and instead rely on commands failing fast. |
-| `ix connect` | Connects Claude Code to a running ix server. |
+| `ix docker start` | Starts the local backend (ArangoDB + memory layer). What to run when `ix status` reports the backend unreachable. |
 
 ### Pro-Only Commands
 
@@ -112,7 +112,7 @@ for a `revision` field. If absent, all Pro steps are skipped gracefully.
 | `ix bug create "<title>" --severity <level> --affects <symbol>` | Creates a new bug record. ix-debug suggests this at the end of an investigation for new bugs. |
 | `ix plans` | Lists active implementation plans. Used by ix-plan and ix-safe-refactor-planner to avoid duplicate work. |
 | `ix plan create "<title>" --goal <id>` | Creates a new plan to track a change set. |
-| `ix goals` | Lists active development goals. Used by ix-plan to contextualize planned changes. |
+| `ix goal list` | Lists development goals. Used by ix-plan to contextualize planned changes. |
 
 ---
 
@@ -542,7 +542,7 @@ Identifies symbols that depend on multiple targets — highest testing priority.
 **Phase 5 — Project context [Pro]:**
 ```
 ix plans --format json
-ix goals --format json
+ix goal list --format json
 ```
 Cross-reference activePlans to avoid duplicate work. Note which activeGoal this serves.
 Suggest `ix plan create "<title>"` if no existing plan covers this work.
@@ -1126,7 +1126,7 @@ agents/
   ix-architecture-auditor.md  Structural audit (spawned by ix-architecture)
 
 .claude-plugin/
-  plugin.json             Plugin manifest: name=ix-memory, version=2.3.0
+  plugin.json             Plugin manifest: name=ix-memory, version=3.1.1
   marketplace.json        Marketplace listing for /plugin marketplace add
 
 CLAUDE.md                 Behavioral rules injected into Claude's context window
