@@ -52,7 +52,7 @@ Pro features require an Ix Pro backend. Detect with: `ix briefing --format json 
 | Tier | Commands |
 |---|---|
 | **Standard** | `subsystems`, `overview`, `locate`, `search`, `explain`, `read`, `trace`, `callers`, `callees`, `contains`, `depends`, `impact`, `inventory`, `text`, `smells`, `rank`, `stats`, `status`, `map`, `history`, `diff`, `imports`, `imported-by` |
-| **Pro only** | `briefing`, `plans`, `plan`, `goals`, `goal`, `bugs`, `bug`, `decisions`, `decide`, `patches`, `tasks`, `task`, `truth`, `workflow`, `instance` |
+| **Pro only** | `briefing`, `plans`, `plan`, `goal`, `bugs`, `bug`, `decisions`, `decide`, `patches`, `tasks`, `task`, `truth`, `workflow` |
 
 `ix briefing` JSON shape: `{ revision, lastIngestAt, goalCount, activeGoals, activePlans, openBugs, recentDecisions, recentChanges }` — one call provides full project context for all Pro-aware steps.
 

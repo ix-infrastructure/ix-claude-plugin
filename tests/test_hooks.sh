@@ -197,6 +197,17 @@ assert_log_contains() {
   pass "${_name}"
 }
 
+assert_log_not_contains() {
+  local _name="$1" _needle="$2"
+  if [ ! -f "${_IX_DEBUG_LOG:-}" ]; then
+    fail "${_name}" "debug log missing at ${_IX_DEBUG_LOG:-<unset>}"; return
+  fi
+  if grep -Fq -- "$_needle" "${_IX_DEBUG_LOG}"; then
+    fail "${_name}" "debug log unexpectedly contains '${_needle}'"; return
+  fi
+  pass "${_name}"
+}
+
 run_ix_hook_decide() {
   local _mode="$1" _content="$2"; shift 2
   _RC=0
@@ -331,7 +342,10 @@ else
 fi
 
 run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
-assert_log_contains "briefing/debug logs pro probe command" "CMD ix briefing --help"
+# The pro probe must run the real command. `ix briefing --help` exits 0 even
+# when only the Pro *stub* is registered, so probing with it reported Pro as
+# available on every OSS install.
+assert_log_not_contains "briefing/pro probe does not use --help" "CMD ix briefing --help"
 assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format json"
 
 _briefing_repeat_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
