@@ -197,8 +197,21 @@ ix_check_pro() {
   _health_ts=$(cat "$IX_HEALTH_CACHE" 2>/dev/null || echo "0")
   _pro_ts=$(cat "${IX_PRO_CACHE}.ts" 2>/dev/null || echo "")
   if [ "$_pro_ts" != "$_health_ts" ]; then
-    ix_log_command ix briefing --help
-    ix briefing --help >/dev/null 2>&1 && echo "1" > "$IX_PRO_CACHE" || echo "0" > "$IX_PRO_CACHE"
+    # Probe with the real command, not `--help`.
+    #
+    # Pro commands are always *registered*: without @ix/pro the CLI installs a
+    # stub for each one whose action prints "The 'briefing' command requires Ix
+    # Pro." and exits 1. But commander handles --help before any action runs, so
+    # `ix briefing --help` exits 0 on a stub exactly as it does on the real
+    # command. Probing with it reported Pro as available on every OSS install,
+    # and the briefing hook then ran a Pro command that could only fail.
+    #
+    # Running the command itself is the discriminator: stub exits 1, real exits
+    # 0. This is also what skills/shared.md has always told the model to do —
+    # the shell hook was the odd one out. Called after ix_health_check, so the
+    # backend is already known reachable.
+    ix_log_command ix briefing --format json
+    ix briefing --format json >/dev/null 2>&1 && echo "1" > "$IX_PRO_CACHE" || echo "0" > "$IX_PRO_CACHE"
     echo "$_health_ts" > "${IX_PRO_CACHE}.ts"
   fi
   _pro_val=$(cat "$IX_PRO_CACHE" 2>/dev/null || echo "0")
