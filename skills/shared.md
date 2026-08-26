@@ -52,12 +52,12 @@ Pro features require an Ix Pro backend. Detect with: `ix briefing --format json 
 | Tier | Commands |
 |---|---|
 | **Standard** | `subsystems`, `overview`, `locate`, `search`, `explain`, `read`, `trace`, `callers`, `callees`, `contains`, `depends`, `impact`, `inventory`, `text`, `smells`, `rank`, `stats`, `status`, `map`, `history`, `diff`, `imports`, `imported-by`, `patches`, `context`, `savings`, `doctor` |
-| **Pro only** | `briefing`, `bug`, `bugs`, `decide`, `decisions`, `goal`, `goals`, `plan`, `plans`, `task`, `tasks`, `truth`, `workflow` |
+| **Pro only** | `briefing`, `bug`, `decide`, `decisions`, `goal`, `goals`, `plan`, `plans`, `task`, `tasks`, `truth`, `workflow` |
 
-The Pro row is `PRO_COMMANDS` in the CLI's `register/oss.ts`, plus `bugs`.
-`bugs` is a Pro command that the OSS list omits, so an OSS install answers it
-with `unknown command 'bugs'` rather than `requires Ix Pro` — tracked upstream;
-it still needs Pro either way, which is what this table is for.
+The Pro row is `PRO_COMMANDS` in the CLI's `register/oss.ts`, verbatim. Two
+retired names are deliberately absent: `bugs` was collapsed into `ix bug list`
+(Ix-pro#108) and `instance` no longer exists at all, so neither is a command in
+either tier.
 
 `ix briefing` JSON shape: `{ revision, lastIngestAt, goalCount, activeGoals, activePlans, openBugs, recentDecisions, recentChanges }` — one call provides full project context for all Pro-aware steps.
 
