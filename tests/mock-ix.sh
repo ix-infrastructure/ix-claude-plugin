@@ -38,7 +38,14 @@ case "$SUBCOMMAND" in
     # Ix#539 makes an unresolved target exit non-zero while still printing its
     # body. Simulated separately from IX_MOCK_FAIL, which suppresses output too:
     # the whole point is a failing exit code *with* usable output.
-    [ -n "${IX_MOCK_LOCATE_EXIT:-}" ] && exit "${IX_MOCK_LOCATE_EXIT}"
+    #
+    # `if`, never `[ -n "$V" ] && exit "$V"`. That form evaluates to status 1
+    # when V is unset, and as the last command in this branch it becomes the
+    # mock's own exit status -- so `ix locate` would exit 1 on every call, in
+    # every test. It is invisible precisely because the fix in this PR makes the
+    # hook tolerate a non-zero exit with a body, so the suite stays green while
+    # no longer testing what it claims to.
+    if [ -n "${IX_MOCK_LOCATE_EXIT:-}" ]; then exit "${IX_MOCK_LOCATE_EXIT}"; fi
     ;;
   overview)
     cat "${IX_MOCK_OVERVIEW_FILE:-${FX}/overview_normal.json}"
