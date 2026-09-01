@@ -96,12 +96,33 @@ if [ "$SKIP_IMPACT" -eq 0 ]; then
   _IMP_PID=$!
 fi
 
-wait $_INV_PID || ix_capture_async "ix" "ix-inventory" "inventory failed" "$?" \
-  "ix inventory $REL_PATH" "$(head -3 "$_inv_err")"
-wait $_OV_PID  || ix_capture_async "ix" "ix-overview"  "overview failed"  "$?" \
-  "ix overview $REL_PATH"  "$(head -3 "$_ov_err")"
-[ -n "$_IMP_PID" ] && { wait $_IMP_PID || ix_capture_async "ix" "ix-impact" "impact failed" "$?" \
-  "ix impact $REL_PATH"    "$(head -3 "$_imp_err")"; }
+# An unresolved target exits non-zero but still writes its JSON body (Ix#539;
+# Ix#547 brings `overview` and `impact` into that set). The body already
+# survives here -- it is on disk in the temp file, and read below regardless --
+# so the bug was never lost output. It was the ledger: every file a user opens
+# that is not in the graph filed an ix error, which is a normal outcome, not a
+# fault, and it buries the real failures under noise.
+#
+# So the exit code alone no longer decides. Only an empty body does.
+_inv_status=0; wait $_INV_PID || _inv_status=$?
+if [ "$_inv_status" -ne 0 ] && [ ! -s "$_inv_tmp" ]; then
+  ix_capture_async "ix" "ix-inventory" "inventory failed" "$_inv_status" \
+    "ix inventory $REL_PATH" "$(head -3 "$_inv_err")"
+fi
+
+_ov_status=0; wait $_OV_PID || _ov_status=$?
+if [ "$_ov_status" -ne 0 ] && [ ! -s "$_ov_tmp" ]; then
+  ix_capture_async "ix" "ix-overview" "overview failed" "$_ov_status" \
+    "ix overview $REL_PATH" "$(head -3 "$_ov_err")"
+fi
+
+if [ -n "$_IMP_PID" ]; then
+  _imp_status=0; wait $_IMP_PID || _imp_status=$?
+  if [ "$_imp_status" -ne 0 ] && [ ! -s "$_imp_tmp" ]; then
+    ix_capture_async "ix" "ix-impact" "impact failed" "$_imp_status" \
+      "ix impact $REL_PATH" "$(head -3 "$_imp_err")"
+  fi
+fi
 
 INV_RAW=$(cat "$_inv_tmp")
 OV_RAW=$(cat "$_ov_tmp")

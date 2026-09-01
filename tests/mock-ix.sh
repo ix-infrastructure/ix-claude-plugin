@@ -15,6 +15,19 @@
 #   IX_MOCK_EXPECT_INVENTORY_KIND — expected `--kind` arg for `ix inventory`
 #   IX_MOCK_BRIEFING_FILE  — path to fixture for `ix briefing` (default: briefing.json)
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
+#   IX_MOCK_OVERVIEW_EXIT=N   — `ix overview` exits N *after* printing its body
+#   IX_MOCK_IMPACT_EXIT=N     — `ix impact` exits N *after* printing its body
+#   IX_MOCK_INVENTORY_EXIT=N  — `ix inventory` exits N *after* printing its body
+#                            (Ix#547: an unresolved target is a non-zero exit
+#                            with a usable payload, not an absent one.
+#                            Simulated separately from IX_MOCK_FAIL, which
+#                            suppresses the output too.)
+#                            Written as `if`, never `[ -n "$V" ] && exit "$V"`:
+#                            that form evaluates to status 1 when V is unset and
+#                            becomes the mock's own exit status, so every call
+#                            would fail. It is invisible while the code under
+#                            test tolerates a non-zero exit -- which is exactly
+#                            what these variables exist to test.
 
 SUBCOMMAND="${1:-}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,9 +48,11 @@ case "$SUBCOMMAND" in
     ;;
   overview)
     cat "${IX_MOCK_OVERVIEW_FILE:-${FX}/overview_normal.json}"
+    if [ -n "${IX_MOCK_OVERVIEW_EXIT:-}" ]; then exit "${IX_MOCK_OVERVIEW_EXIT}"; fi
     ;;
   impact)
     cat "${IX_MOCK_IMPACT_FILE:-${FX}/impact_high.json}"
+    if [ -n "${IX_MOCK_IMPACT_EXIT:-}" ]; then exit "${IX_MOCK_IMPACT_EXIT}"; fi
     ;;
   inventory)
     if [ -n "${IX_MOCK_EXPECT_INVENTORY_PATH:-}" ] || [ -n "${IX_MOCK_EXPECT_INVENTORY_KIND:-}" ]; then
@@ -69,6 +84,7 @@ case "$SUBCOMMAND" in
       fi
     fi
     cat "${IX_MOCK_INVENTORY_FILE:-${FX}/inventory_results.json}"
+    if [ -n "${IX_MOCK_INVENTORY_EXIT:-}" ]; then exit "${IX_MOCK_INVENTORY_EXIT}"; fi
     ;;
   map)
     exit 0
