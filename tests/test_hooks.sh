@@ -342,7 +342,10 @@ else
 fi
 
 run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
-assert_log_contains "briefing/debug logs pro probe command" "CMD ix briefing --help"
+# The pro probe must run the real command. `ix briefing --help` exits 0 even
+# when only the Pro *stub* is registered, so probing with it reported Pro as
+# available on every OSS install.
+assert_log_not_contains "briefing/pro probe does not use --help" "CMD ix briefing --help"
 assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format json"
 
 _briefing_repeat_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
