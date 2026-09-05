@@ -988,6 +988,37 @@ assert_empty "annotate/zero-ctx records stay silent"
 # ═════════════════════════════════════════════════════════════════════════════
 section "ix unavailable notification"
 
+# `ix` has to be unfindable here — and everything else the hook needs has to
+# stay findable. Replacing PATH wholesale with `/usr/bin:/bin` did the first and
+# broke the second anywhere those two directories are not self-sufficient: on
+# Git Bash for Windows the coreutils live under `/mingw64/bin`, so the hook
+# exited 127 before it could detect anything, and both cases below failed for a
+# reason that had nothing to do with the code under test (#20).
+#
+# Drop only the directories that actually hold an `ix`, and leave the rest of
+# PATH alone. Portable, and it still leaves `ix` unfindable when there is no ix
+# installed at all — in which case PATH comes back unchanged and the cases are
+# testing the same thing they always were.
+_path_without_ix() {
+  local _out="" _dir
+  local IFS=:
+  for _dir in ${PATH}; do
+    [ -n "${_dir}" ] || continue
+    # `-e`/`-L` rather than `-x`: a dangling symlink named `ix` is not
+    # executable, so an `-x` test keeps its directory — and then the hook finds
+    # a broken `ix` instead of no `ix`, which is a third state neither case
+    # here is about. One such symlink from an old npm install was enough to
+    # make this section fail while looking like a hook bug.
+    if [ -e "${_dir}/ix" ] || [ -L "${_dir}/ix" ] \
+      || [ -e "${_dir}/ix.exe" ] || [ -L "${_dir}/ix.exe" ]; then
+      continue
+    fi
+    _out="${_out:+${_out}:}${_dir}"
+  done
+  printf '%s' "${_out}"
+}
+_NO_IX_PATH=$(_path_without_ix)
+
 _no_ix_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _RC=0
 _OUT=$(env \
@@ -995,7 +1026,7 @@ _OUT=$(env \
   IX_HEALTH_CACHE="${_no_ix_tmp}/ix-healthy" \
   IX_LEDGER_MODE="off" \
   IX_ERROR_MODE="off" \
-  PATH="/usr/bin:/bin" \
+  PATH="${_NO_IX_PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
 
 _notify_name="unavailable/first hook fire emits systemMessage"
@@ -1016,7 +1047,7 @@ _OUT2=$(env \
   IX_HEALTH_CACHE="${_no_ix_tmp}/ix-healthy" \
   IX_LEDGER_MODE="off" \
   IX_ERROR_MODE="off" \
-  PATH="/usr/bin:/bin" \
+  PATH="${_NO_IX_PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC2=$?
 
 _silence_name="unavailable/subsequent hook fires are silent"
