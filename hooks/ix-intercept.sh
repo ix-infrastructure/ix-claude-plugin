@@ -120,14 +120,21 @@ elif [ "$TOOL" = "Glob" ]; then
   ix_log_command ix inventory "${INV_ARGS[@]}"
   _t0=$(ix_now_ms)
   _inv_err=$(mktemp)
-  INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || {
-    _exit=$?
+  # Same rule as the other hooks: a non-zero exit with a body is an answer.
+  # `inventory` is not in Ix#547's set today, but it takes a `--path` that may
+  # not resolve, and the CLI is moving toward reporting that as a record with a
+  # non-zero exit. Guarding now costs nothing and means this hook does not have
+  # to be found again later.
+  _exit=0
+  INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || _exit=$?
+  if [ "$_exit" -ne 0 ] && [ -z "$INV_RAW" ]; then
     ix_capture_async "ix" "ix-inventory" "inventory failed" "$_exit" \
       "ix inventory '$INV_PATH' (from '$PATH_ARG')" "$(head -3 "$_inv_err")"
     ix_log "FAILED ix inventory exit=$_exit"
     rm -f "$_inv_err"
     exit 0
-  }
+  fi
+  [ "$_exit" -ne 0 ] && ix_log "MISS ix inventory exited ${_exit} with a body; treated as an answer"
   rm -f "$_inv_err"
   [ -z "$INV_RAW" ] && { ix_log "SKIP empty inventory result"; exit 0; }
 

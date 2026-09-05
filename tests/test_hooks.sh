@@ -665,6 +665,25 @@ assert_empty "read/ix failure degrades gracefully"
 run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_HOOK_OUTPUT_STYLE=structured
 assert_structured "read/structured output mode"
 
+# ── Non-zero exit WITH a body (Ix#547) ───────────────────────────────────────
+#
+# Unlike pre-edit, this hook never lost the body -- it is written to a temp file
+# and read after `wait` regardless of exit status. What it lost was the
+# *judgement*: every file opened that is not in the graph filed an ix error,
+# which is a routine outcome rather than a fault, and buries real failures.
+# These pin that the output is unchanged when ix exits non-zero with a body.
+
+run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_MOCK_OVERVIEW_EXIT=1 IX_MOCK_IMPACT_EXIT=1
+assert_additional_context "read/non-zero exit with a body still injects context"
+
+# Both commands exit non-zero with an unresolved-target record: nothing usable
+# to inject, and still no crash under `set -euo pipefail`.
+run_hook ix-read.sh "${FX_IN}/read_normal.json" \
+  IX_MOCK_OVERVIEW_EXIT=1 IX_MOCK_IMPACT_EXIT=1 \
+  IX_MOCK_OVERVIEW_FILE="${FX_IX}/unresolved_target.json" \
+  IX_MOCK_IMPACT_FILE="${FX_IX}/unresolved_target.json"
+assert_empty "read/unresolved target on both commands is silent"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-pre-edit.sh — Edit and Write
 #
@@ -713,6 +732,30 @@ assert_empty "pre-edit/ix failure degrades gracefully"
 # Structured output format
 run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_HOOK_OUTPUT_STYLE=structured
 assert_structured "pre-edit/structured output mode"
+
+# ── Non-zero exit WITH a body (Ix#547) ───────────────────────────────────────
+#
+# `ix impact` on the file being edited is the most frequent ix call this plugin
+# makes, and Ix#547 makes it exit 1 for a target it cannot resolve -- while
+# still printing the record. A miss there is routine: a new file, or one not
+# yet ingested. The hook must read that record rather than bailing on the exit
+# code, and must not file it as an ix error.
+#
+# Distinguished from IX_MOCK_FAIL above, which suppresses stdout as well: the
+# whole point here is a failing exit code *with* usable output.
+
+# High-risk body, non-zero exit → the body still drives the warning.
+run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_MOCK_IMPACT_EXIT=1
+assert_additional_context "pre-edit/non-zero exit with a body still warns"
+
+# Unresolved-target record, non-zero exit → no riskLevel, so the hook exits
+# quietly on the existing "not in graph" branch rather than reporting a failure.
+run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" \
+  IX_MOCK_IMPACT_EXIT=1 IX_MOCK_IMPACT_FILE="${FX_IX}/unresolved_target.json"
+assert_empty "pre-edit/unresolved target is silent, not an error"
+
+run_hook_with_debug_log ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_MOCK_IMPACT_EXIT=1
+assert_log_contains "pre-edit/logs a miss rather than a failure" "MISS ix impact exited 1 with a body"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-bash.sh — Bash grep intercept
