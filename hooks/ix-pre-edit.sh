@@ -51,14 +51,26 @@ fi
 ix_log "RUN ix impact $REL_PATH"
 _imp_err=$(mktemp)
 ix_log_command ix impact "$REL_PATH" --format json
-RAW=$(ix impact "$REL_PATH" --format json 2>"$_imp_err") || {
-  _exit=$?
+# `|| _exit=$?` rather than `|| { ...; exit 0; }`: an unresolved target exits
+# non-zero but still prints its JSON body (Ix#539, and Ix#547 brings `impact`
+# into that set). Bailing on the exit code alone threw that body away and filed
+# an error for it -- and `ix impact` on the file being edited is the most
+# frequent ix call this plugin makes, with a miss being routine: a new file, or
+# one not yet ingested. Only an empty body is a genuine failure.
+#
+# The body needs no special handling downstream: an error record has no
+# `riskLevel`, so RISK_LEVEL below falls to "unknown" and the hook exits quietly
+# on the existing "not in graph" branch, which is the honest outcome.
+_exit=0
+RAW=$(ix impact "$REL_PATH" --format json 2>"$_imp_err") || _exit=$?
+if [ "$_exit" -ne 0 ] && [ -z "$RAW" ]; then
   ix_capture_async "ix" "ix-impact" "ix impact failed for $REL_PATH" "$_exit" \
     "ix impact $REL_PATH" "$(head -3 "$_imp_err")"
   ix_log "FAILED ix impact exit=$_exit"
   rm -f "$_imp_err"
   exit 0
-}
+fi
+[ "$_exit" -ne 0 ] && ix_log "MISS ix impact exited ${_exit} with a body; treated as an answer"
 rm -f "$_imp_err"
 [ -z "$RAW" ] && exit 0
 
