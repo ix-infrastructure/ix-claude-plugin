@@ -560,6 +560,30 @@ run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
 assert_additional_context "intercept/medium confidence candidates augment" "[ix text + ix locate]"
 
+# ── Ix#539: `ix locate` exiting non-zero while still printing a body ──────────
+# An unresolved target is about to exit non-zero with its JSON payload intact.
+# The hook must keep using that payload, and must not record it as a locate
+# failure -- otherwise every symbol a user asks about that does not exist files
+# an error, burying the real failures.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_EXIT=1
+assert_additional_context "intercept/non-zero locate still augments" "[ix text + ix locate]"
+
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_EXIT=1
+assert_log_contains "intercept/non-zero locate with a body is a miss, not a failure" \
+  "MISS ix locate exited 1 with a body"
+
+# An empty body with a non-zero exit is still a genuine failure and must not be
+# swallowed by the same branch.
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE=/dev/null \
+  IX_MOCK_LOCATE_EXIT=1
+assert_log_not_contains "intercept/non-zero locate with no body stays a failure" \
+  "MISS ix locate exited"
+
 # Glob → inventory → block when result set is manageable
 run_hook ix-intercept.sh "${FX_IN}/glob_path.json"
 assert_block_decision "intercept/glob pattern blocks" "Next: ix overview AuthService"
@@ -967,6 +991,37 @@ assert_empty "annotate/zero-ctx records stay silent"
 # ═════════════════════════════════════════════════════════════════════════════
 section "ix unavailable notification"
 
+# `ix` has to be unfindable here — and everything else the hook needs has to
+# stay findable. Replacing PATH wholesale with `/usr/bin:/bin` did the first and
+# broke the second anywhere those two directories are not self-sufficient: on
+# Git Bash for Windows the coreutils live under `/mingw64/bin`, so the hook
+# exited 127 before it could detect anything, and both cases below failed for a
+# reason that had nothing to do with the code under test (#20).
+#
+# Drop only the directories that actually hold an `ix`, and leave the rest of
+# PATH alone. Portable, and it still leaves `ix` unfindable when there is no ix
+# installed at all — in which case PATH comes back unchanged and the cases are
+# testing the same thing they always were.
+_path_without_ix() {
+  local _out="" _dir
+  local IFS=:
+  for _dir in ${PATH}; do
+    [ -n "${_dir}" ] || continue
+    # `-e`/`-L` rather than `-x`: a dangling symlink named `ix` is not
+    # executable, so an `-x` test keeps its directory — and then the hook finds
+    # a broken `ix` instead of no `ix`, which is a third state neither case
+    # here is about. One such symlink from an old npm install was enough to
+    # make this section fail while looking like a hook bug.
+    if [ -e "${_dir}/ix" ] || [ -L "${_dir}/ix" ] \
+      || [ -e "${_dir}/ix.exe" ] || [ -L "${_dir}/ix.exe" ]; then
+      continue
+    fi
+    _out="${_out:+${_out}:}${_dir}"
+  done
+  printf '%s' "${_out}"
+}
+_NO_IX_PATH=$(_path_without_ix)
+
 _no_ix_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _RC=0
 _OUT=$(env \
@@ -974,7 +1029,7 @@ _OUT=$(env \
   IX_HEALTH_CACHE="${_no_ix_tmp}/ix-healthy" \
   IX_LEDGER_MODE="off" \
   IX_ERROR_MODE="off" \
-  PATH="/usr/bin:/bin" \
+  PATH="${_NO_IX_PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
 
 _notify_name="unavailable/first hook fire emits systemMessage"
@@ -995,7 +1050,7 @@ _OUT2=$(env \
   IX_HEALTH_CACHE="${_no_ix_tmp}/ix-healthy" \
   IX_LEDGER_MODE="off" \
   IX_ERROR_MODE="off" \
-  PATH="/usr/bin:/bin" \
+  PATH="${_NO_IX_PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC2=$?
 
 _silence_name="unavailable/subsequent hook fires are silent"

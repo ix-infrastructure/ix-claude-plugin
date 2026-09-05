@@ -283,7 +283,7 @@ parse_json() {
 # Requires: ix_capture_async (from ix-errors.sh, no-op if absent)
 ix_run_text_locate() {
   local _pattern="$1" _path_arg="${2:-}" _lang_arg="${3:-}"
-  local _text_tmp _loc_tmp _text_err _loc_err _TEXT_PID _LOC_PID _is_plain
+  local _text_tmp _loc_tmp _text_err _loc_err _TEXT_PID _LOC_PID _is_plain _loc_status
   local _TEXT_ARGS=("$_pattern" "--limit" "15" "--format" "json")
   [ -n "$_path_arg" ] && _TEXT_ARGS+=("--path" "$_path_arg")
   [ -n "$_lang_arg" ] && _TEXT_ARGS+=("--language" "$_lang_arg")
@@ -321,8 +321,25 @@ ix_run_text_locate() {
   wait "$_TEXT_PID" || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
     "ix text '${_pattern}'" "$(head -3 "$_text_err")"
   [ -n "$_LOC_PID" ] && {
-    wait "$_LOC_PID" || ix_capture_async "ix" "ix-locate" "locate failed" "$?" \
-      "ix locate '${_pattern}'" "$(head -3 "$_loc_err")"
+    # `_loc_status=0; wait || _loc_status=$?` rather than a bare `wait`: these
+    # hooks run under `set -euo pipefail`, so an unguarded non-zero `wait` kills
+    # the hook outright. The `||` also keeps $? intact, which `if ! wait` would
+    # have replaced with the negation's own result.
+    _loc_status=0
+    wait "$_LOC_PID" || _loc_status=$?
+    if [ "$_loc_status" -ne 0 ]; then
+      # An unresolved target exits non-zero but still prints its JSON body
+      # (Ix#539). That is an answer, not a failure -- filing it would record an
+      # error for every symbol a user asks about that does not happen to exist,
+      # and bury real locate failures in the ledger. Only an empty body is a
+      # genuine failure.
+      if [ -s "$_loc_tmp" ]; then
+        ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
+      else
+        ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
+          "ix locate '${_pattern}'" "$(head -3 "$_loc_err")"
+      fi
+    fi
   }
 
   _TEXT_RAW=$(cat "$_text_tmp")

@@ -138,10 +138,26 @@ jobs:
   # One stable required-status-check context. Fails if any upstream job failed
   # OR was skipped/cancelled, so the job graph can be reshaped without orphaning
   # the required check.
+  hooks-tests:
+    name: Hook tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `jq` and `bash` are preinstalled on ubuntu-latest, which is everything
+      # tests/test_hooks.sh declares it needs. No `ix` is installed on purpose:
+      # the suite fakes the binary where it needs one, and the "ix unavailable"
+      # cases strip whatever `ix` is on PATH, so a runner without one exercises
+      # the same paths a developer's machine does.
+      - name: Run hook tests
+        run: bash tests/test_hooks.sh
+
   ci-success:
     name: CI Passed
     if: always()
-    needs: [validate, shellcheck]
+    needs: [validate, shellcheck, hooks-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs succeeded
