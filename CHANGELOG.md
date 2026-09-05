@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1.2
+
+Fixes two commands the skills told Claude to run that the `ix` CLI does not have.
+
+- **`ix goals` does not exist — replaced with `ix goal list`.** The CLI's command is `goal` (singular); `goals` is only a help-topic alias that forwards to `goal`'s help, so `ix goals --format json` could never return data. `ix-plan` ran it directly, so the Pro branch of that skill silently produced no goal context.
+- **`ix connect` does not exist and never has.** `ix-architecture` used it as the recovery instruction when the graph is unreachable, which sent users to a dead end at the exact moment something was already broken. It now says to run `ix docker start` and confirm with `ix status`, matching what the CLI itself prints for an unreachable backend.
+- Corrected a stale plugin version in `IX_CLAUDE_PLUGIN_OVERVIEW.md` (said 2.3.0).
+
+Every `ix` command referenced anywhere in the plugin was checked against the CLI's registered command list; these were the only two that did not resolve.
+
 ## 3.1.1
 
 Hardening for the auto-ingestion hooks so background graph refresh is safe to run frequently.

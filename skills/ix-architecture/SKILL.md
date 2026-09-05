@@ -20,7 +20,7 @@ Before anything else, run:
 command -v ix
 ix status
 ```
-If either fails, stop: *"ix graph unavailable — run `ix connect` or check your connection."*
+If either fails, stop: *"ix graph unavailable — run `ix docker start` to start the backend, then `ix status` to confirm."*
 
 Then verify the graph has data:
 ```bash
