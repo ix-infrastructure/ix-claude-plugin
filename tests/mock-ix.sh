@@ -15,6 +15,8 @@
 #   IX_MOCK_EXPECT_INVENTORY_KIND — expected `--kind` arg for `ix inventory`
 #   IX_MOCK_BRIEFING_FILE  — path to fixture for `ix briefing` (default: briefing.json)
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
+#   IX_MOCK_LOCATE_EXIT=N     — `ix locate` exits N *after* printing its body
+#                            (Ix#539)
 #   IX_MOCK_OVERVIEW_EXIT=N   — `ix overview` exits N *after* printing its body
 #   IX_MOCK_IMPACT_EXIT=N     — `ix impact` exits N *after* printing its body
 #   IX_MOCK_INVENTORY_EXIT=N  — `ix inventory` exits N *after* printing its body
@@ -45,6 +47,17 @@ case "$SUBCOMMAND" in
     ;;
   locate)
     cat "${IX_MOCK_LOCATE_FILE:-${FX}/locate_resolved.json}"
+    # Ix#539 makes an unresolved target exit non-zero while still printing its
+    # body. Simulated separately from IX_MOCK_FAIL, which suppresses output too:
+    # the whole point is a failing exit code *with* usable output.
+    #
+    # `if`, never `[ -n "$V" ] && exit "$V"`. That form evaluates to status 1
+    # when V is unset, and as the last command in this branch it becomes the
+    # mock's own exit status -- so `ix locate` would exit 1 on every call, in
+    # every test. It is invisible precisely because the fix in this PR makes the
+    # hook tolerate a non-zero exit with a body, so the suite stays green while
+    # no longer testing what it claims to.
+    if [ -n "${IX_MOCK_LOCATE_EXIT:-}" ]; then exit "${IX_MOCK_LOCATE_EXIT}"; fi
     ;;
   overview)
     cat "${IX_MOCK_OVERVIEW_FILE:-${FX}/overview_normal.json}"
