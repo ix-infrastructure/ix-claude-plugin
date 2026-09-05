@@ -197,6 +197,17 @@ assert_log_contains() {
   pass "${_name}"
 }
 
+assert_log_not_contains() {
+  local _name="$1" _needle="$2"
+  if [ ! -f "${_IX_DEBUG_LOG:-}" ]; then
+    fail "${_name}" "debug log missing at ${_IX_DEBUG_LOG:-<unset>}"; return
+  fi
+  if grep -Fq -- "$_needle" "${_IX_DEBUG_LOG}"; then
+    fail "${_name}" "debug log unexpectedly contains '${_needle}'"; return
+  fi
+  pass "${_name}"
+}
+
 run_ix_hook_decide() {
   local _mode="$1" _content="$2"; shift 2
   _RC=0
@@ -545,6 +556,30 @@ assert_empty "intercept/grep regex literal"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
 assert_additional_context "intercept/medium confidence candidates augment" "[ix text + ix locate]"
+
+# ── Ix#539: `ix locate` exiting non-zero while still printing a body ──────────
+# An unresolved target is about to exit non-zero with its JSON payload intact.
+# The hook must keep using that payload, and must not record it as a locate
+# failure -- otherwise every symbol a user asks about that does not exist files
+# an error, burying the real failures.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_EXIT=1
+assert_additional_context "intercept/non-zero locate still augments" "[ix text + ix locate]"
+
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_EXIT=1
+assert_log_contains "intercept/non-zero locate with a body is a miss, not a failure" \
+  "MISS ix locate exited 1 with a body"
+
+# An empty body with a non-zero exit is still a genuine failure and must not be
+# swallowed by the same branch.
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE=/dev/null \
+  IX_MOCK_LOCATE_EXIT=1
+assert_log_not_contains "intercept/non-zero locate with no body stays a failure" \
+  "MISS ix locate exited"
 
 # Glob → inventory → block when result set is manageable
 run_hook ix-intercept.sh "${FX_IN}/glob_path.json"
