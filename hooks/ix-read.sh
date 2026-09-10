@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2026 Ix Infrastructure INC
+# Copyright 2026 Ix Infrastructure Inc.
 
 # DISABLED — removed from hooks.json per Phase E spec; not active at runtime.
 # The additive Read hook added 3 ix commands of overhead without preventing

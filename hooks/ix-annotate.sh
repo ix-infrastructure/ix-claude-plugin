@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2026 Ix Infrastructure INC
+# Copyright 2026 Ix Infrastructure Inc.
 
 # ix-annotate.sh — Stop hook attribution summary
 #

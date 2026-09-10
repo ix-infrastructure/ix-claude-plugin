@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2026 Ix Infrastructure INC
+# Copyright 2026 Ix Infrastructure Inc.
 
 # hooks/lib/index.sh — Barrel entry point for all ix hook shared libraries
 #
