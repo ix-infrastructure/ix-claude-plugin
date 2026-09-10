@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure Inc.
+
 # ix-ledger.sh — Per-turn attribution ledger
 #
 # Sourced by ix hooks via lib/index.sh. Provides two public functions:

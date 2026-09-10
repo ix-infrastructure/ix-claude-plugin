@@ -23,6 +23,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # Every source file must carry the copyright line. In this job rather than
+      # a workflow of its own: the ruleset requires exactly one status check,
+      # `CI Passed`, and `validate` is in its `needs` — a check in any other
+      # workflow reports on the PR and gates nothing. Toolchain-free (stdlib
+      # python3 is preinstalled; the script shells out only to git).
+      - name: Copyright headers on every source file
+        run: python3 .github/scripts/copyright-headers.py
+
       - name: Validate JSON files
         run: |
           echo "── JSON validation ──"

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure Inc.
+
 # test-local.sh — Sync dev repo to plugin cache and verify everything looks right
 # Run from anywhere: bash ~/ix/ix-claude-plugin/test-local.sh
 
