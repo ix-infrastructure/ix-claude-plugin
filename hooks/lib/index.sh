@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # hooks/lib/index.sh — Barrel entry point for all ix hook shared libraries
 #
 # Source this file from any hook instead of loading ix-errors.sh and ix-lib.sh

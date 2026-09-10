@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-briefing.sh — UserPromptSubmit hook
 #
 # Fires at the start of each user prompt. Injects a compact ix session briefing

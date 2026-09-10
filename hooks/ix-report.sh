@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-report.sh — Show locally captured errors
 #
 # Usage:

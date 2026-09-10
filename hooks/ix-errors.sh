@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-errors.sh — Error capture and local logging
 #
 # Sourced by ix hooks to capture errors to a local log.

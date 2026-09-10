@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-intercept.sh — PreToolUse hook for Grep and Glob
 #
 # Fires before Grep/Glob executes. Runs ix text + ix locate/inventory in

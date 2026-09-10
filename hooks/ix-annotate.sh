@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-annotate.sh — Stop hook attribution summary
 #
 # Fires on Stop, reads the current turn's ix ledger records, and emits a concise

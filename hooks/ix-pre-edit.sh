@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-pre-edit.sh — PreToolUse hook for Edit / Write / MultiEdit
 #
 # Fires before Claude edits or creates a file. Runs ix impact on the target

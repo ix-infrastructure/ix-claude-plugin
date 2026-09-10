@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-map.sh — Stop hook (async)
 #
 # Fires after Claude finishes each response. Runs ix map asynchronously to

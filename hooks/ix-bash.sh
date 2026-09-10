@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # ix-bash.sh — PreToolUse hook for Bash
 #
 # Fires before Claude runs a Bash command. Detects grep/rg search patterns and

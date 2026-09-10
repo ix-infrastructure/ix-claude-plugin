@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # tests/test_hooks.sh — Integration test harness for ix Claude plugin hooks.
 #
 # Usage: bash tests/test_hooks.sh

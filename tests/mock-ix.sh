@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure INC
+
 # tests/mock-ix.sh — Mock ix binary for hook testing.
 #
 # Intercepts ix CLI calls and returns fixture JSON based on the subcommand.
