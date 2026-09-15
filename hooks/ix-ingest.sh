@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure Inc.
+
 # ix-ingest.sh — PostToolUse hook for Write, Edit, MultiEdit, NotebookEdit
 #
 # Fires after Claude modifies a file. Runs ix map on the changed file to keep

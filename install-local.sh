@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure Inc.
+
 # install-local.sh — Register the local ix-claude-plugin as the active Claude plugin.
 #
 # Usage: ./install-local.sh

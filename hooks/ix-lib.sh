@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ix Infrastructure Inc.
+
 # ix-lib.sh — Shared utilities for ix Claude plugin hooks
 #
 # Source this file after sourcing ix-errors.sh:
