@@ -16,6 +16,7 @@
 #   IX_MOCK_EXPECT_INVENTORY_PATH — expected `--path` arg for `ix inventory`
 #   IX_MOCK_EXPECT_INVENTORY_KIND — expected `--kind` arg for `ix inventory`
 #   IX_MOCK_BRIEFING_FILE  — path to fixture for `ix briefing` (default: briefing.json)
+#   IX_MOCK_BRIEFING_SLEEP=N — `ix briefing` sleeps N seconds before answering
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
 #   IX_MOCK_LOCATE_EXIT=N     — `ix locate` exits N *after* printing its body
 #                            (Ix#539)
@@ -107,6 +108,11 @@ case "$SUBCOMMAND" in
   briefing)
     if [ "${2:-}" = "--help" ]; then
       exit 0
+    fi
+    # A briefing that takes longer than the hook's budget: what a slow or
+    # half-up backend does, and the case the Pro probe has to survive.
+    if [ -n "${IX_MOCK_BRIEFING_SLEEP:-}" ]; then
+      sleep "${IX_MOCK_BRIEFING_SLEEP}"
     fi
     cat "${IX_MOCK_BRIEFING_FILE:-${FX}/briefing.json}"
     ;;

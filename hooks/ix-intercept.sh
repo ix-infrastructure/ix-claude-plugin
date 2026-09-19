@@ -76,7 +76,7 @@ if [ "$TOOL" = "Grep" ]; then
       _loc_type=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.type // .resolvedTarget.kind // "unknown"' 2>/dev/null || echo "")
       _loc_name=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.name // ""' 2>/dev/null || echo "")
       _loc_path=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.path // ""' 2>/dev/null || echo "")
-      if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-1}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
+      if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
          [ "$CONF_GATE" = "ok" ] && [ -n "$_loc_name" ] && [ -n "$_loc_path" ]; then
         HOOK_MODE="block"
       fi
@@ -150,7 +150,7 @@ elif [ "$TOOL" = "Glob" ]; then
   ix_log "INVENTORY total=$TOTAL sample='${SAMPLE:-}'"
 
   GLOB_HOOK_MODE="augment"
-  if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-1}" = "1" ] && [ "${TOTAL:-0}" -gt 0 ] && [ "${TOTAL:-0}" -le 20 ]; then
+  if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "${TOTAL:-0}" -gt 0 ] && [ "${TOTAL:-0}" -le 20 ]; then
     GLOB_HOOK_MODE="block"
   fi
   ix_log "DECISION mode=$GLOB_HOOK_MODE"

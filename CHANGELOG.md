@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.0
+
+Makes the hooks cost what they are worth. Four changes, all measured against recorded Claude Code sessions on a real repo: the hooks were spending 1.8s median and 10s p90 per intercepted search, with 128 outright timeouts.
+
+- **The Pro probe no longer stalls every prompt.** `ix_check_pro` wrote its cache timestamp only *after* `ix briefing` returned. The briefing hook has a 10s budget and the probe can use all of it, so a hook killed mid-probe left no record — and the next prompt probed again, and the one after that. The cache is now claimed before the probe runs, and the probe itself is bounded (`IX_PRO_PROBE_TIMEOUT`, default 5s, where the platform has `timeout`). A slow backend now costs one prompt instead of every prompt.
+- **Shell `grep` gets the same intent filter that `Grep` has.** `ix-bash.sh` sent every extracted pattern to `ix text` + `ix locate`, including phrases, log prefixes and regexes — the exact patterns `ix-intercept.sh` has always skipped, because nothing in the graph is named `\w+\.ts$`. Two ix calls, guaranteed empty, in front of the shell command they were meant to save. An alternation (`a|b`) now counts as a regex for both hooks.
+- **Attribution goes to the person, not into the model's context.** `IX_ANNOTATE_CHANNEL` defaulted to `both`, so the model was sent a ~0.9 KB instruction per prompt to write an attribution section describing work the person had just watched happen. The default is now `systemMessage`: the person still sees the summary. `IX_ANNOTATE_CHANNEL=both` (or `modelSuffix`) restores the model-facing half.
+- **A high-confidence match no longer denies the Grep.** `IX_BLOCK_ON_HIGH_CONFIDENCE` now defaults to 0, matching the Cursor plugin. Denying a tool call costs a whole turn — read the denial, decide, call again — against a ~30k-token turn floor, to save a single tool call. The graph answer is injected either way; set it to 1 for the old behavior.
+
+Hook tests: 101 passing (91 before), including new cases for a stalled probe and for both sides of each flipped default.
+
 ## 3.1.2
 
 Fixes two commands the skills told Claude to run that the `ix` CLI does not have.

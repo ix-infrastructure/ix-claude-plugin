@@ -21,6 +21,7 @@
 #   ix_hook_decide          — emit block/augment/allow output in legacy or structured format
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
+#   ix_run_bounded          — run a command under a wall-clock bound where possible
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
 #   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
@@ -190,6 +191,28 @@ ix_health_check() {
   echo "$_now" > "$IX_HEALTH_CACHE"
 }
 
+# ── Bounded command runner ───────────────────────────────────────────────────
+# Usage: ix_run_bounded <seconds> <command> [args...]
+# Runs the command with a wall-clock bound where the platform can enforce one,
+# and unchanged where it cannot. `timeout` is coreutils: present on Linux and on
+# a macOS with coreutils installed, absent on a stock macOS (where it is
+# `gtimeout`, if at all). Rather than hand-roll a watchdog in a hook running
+# under `set -euo pipefail`, an unbounded run is the fallback — the callers that
+# matter also cache their result before running, so an overrun costs one hook
+# invocation rather than every one after it.
+ix_run_bounded() {
+  local _secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$_secs" "$@"
+    return $?
+  fi
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$_secs" "$@"
+    return $?
+  fi
+  "$@"
+}
+
 # ── Pro check (TTL tied to health check) ─────────────────────────────────────
 # Returns 0 when ix briefing is available, 1 otherwise.
 # Re-checks pro only when health was just refreshed (avoids redundant ix calls).
@@ -212,9 +235,22 @@ ix_check_pro() {
     # 0. This is also what skills/shared.md has always told the model to do —
     # the shell hook was the odd one out. Called after ix_health_check, so the
     # backend is already known reachable.
-    ix_log_command ix briefing --format json
-    ix briefing --format json >/dev/null 2>&1 && echo "1" > "$IX_PRO_CACHE" || echo "0" > "$IX_PRO_CACHE"
+    #
+    # The cache is claimed BEFORE the probe, and bounded while it runs. The
+    # hook that calls this has a 10s budget and the probe can take most of it;
+    # when the hook was killed mid-probe the timestamp was never written, so
+    # the next prompt probed again, and the one after that — a stall on every
+    # single prompt, for as long as the backend was slow. Writing "not Pro"
+    # up front costs at most one TTL of a missed briefing and bounds the
+    # damage to one prompt.
+    echo "0" > "$IX_PRO_CACHE"
     echo "$_health_ts" > "${IX_PRO_CACHE}.ts"
+    ix_log_command ix briefing --format json
+    if ix_run_bounded "${IX_PRO_PROBE_TIMEOUT:-5}" ix briefing --format json >/dev/null 2>&1; then
+      echo "1" > "$IX_PRO_CACHE"
+    else
+      ix_log "PRO probe failed or timed out — treating as OSS until $(( ${IX_PRO_PROBE_TIMEOUT:-5} ))s after the next health refresh"
+    fi
   fi
   _pro_val=$(cat "$IX_PRO_CACHE" 2>/dev/null || echo "0")
   [ "$_pro_val" = "1" ]
@@ -470,8 +506,11 @@ ix_query_intent() {
   local _p="$1"
   QUERY_INTENT="symbol"
 
-  # Pure regex indicators → literal
-  if printf '%s\n' "$_p" | grep -qE '[*+?]|[][()]|\\\w|\{[0-9]|\^[^^]|\$$'; then
+  # Pure regex indicators → literal. `|` is in there because an alternation
+  # (`pytest|yaml|rich`) is a grep expression, not a symbol: the graph has no
+  # entity by that name, so every one of them cost an ix round trip to learn
+  # nothing.
+  if printf '%s\n' "$_p" | grep -qE '[*+?|]|[][()]|\\\w|\{[0-9]|\^[^^]|\$$'; then
     QUERY_INTENT="literal"; return
   fi
 

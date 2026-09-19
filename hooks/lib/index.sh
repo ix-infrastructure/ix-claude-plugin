@@ -35,10 +35,17 @@ source "${_IX_LIB_DIR}/../ix-ledger.sh" 2>/dev/null || true
 
 # ── Plugin env defaults (override via shell env) ──────────────────────────────
 IX_ANNOTATE_MODE="${IX_ANNOTATE_MODE:-brief}"                   # off | brief | debug | verbose
-IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-both}"             # systemMessage | modelSuffix | both
+# systemMessage goes to the person; additionalContext goes into the model's
+# context window. `both` sent the attribution summary to both, so the model paid
+# for a line about work it had just watched happen. The person keeps seeing it.
+IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-systemMessage}"    # systemMessage | modelSuffix | both
 IX_INGEST_INJECT="${IX_INGEST_INJECT:-off}"                    # off | on | debug-only
 IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
 IX_MAP_LOCK_PATH="${IX_MAP_LOCK_PATH:-${TMPDIR:-/tmp}/ix-map.lock}"
 IX_HOOK_OUTPUT_STYLE="${IX_HOOK_OUTPUT_STYLE:-legacy}"         # legacy | structured (Phase C)
 IX_SKIP_SECRET_PATTERNS="${IX_SKIP_SECRET_PATTERNS:-1}"        # Phase C
-IX_BLOCK_ON_HIGH_CONFIDENCE="${IX_BLOCK_ON_HIGH_CONFIDENCE:-1}"  # Phase E
+# Denying a Grep costs a whole turn -- the model has to read the denial, decide
+# what to do instead, and call again -- against a ~30k-token turn floor, to save
+# one tool call. Off by default; the hint is still injected either way. (The
+# Cursor plugin has shipped 0 from the start.)
+IX_BLOCK_ON_HIGH_CONFIDENCE="${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}"  # Phase E
