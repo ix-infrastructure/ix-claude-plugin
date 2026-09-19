@@ -186,6 +186,21 @@ assert_no_hook_specific_output() {
   pass "${_name}"
 }
 
+# The hook produced output, but deliberately nothing addressed to the model.
+assert_no_additional_context() {
+  local _name="$1"
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"; return
+  fi
+  if [ -z "${_OUT}" ]; then
+    fail "${_name}" "expected JSON output, got nothing"; return
+  fi
+  if echo "${_OUT}" | jq -e '.additionalContext // .hookSpecificOutput.additionalContext' >/dev/null 2>&1; then
+    fail "${_name}" "unexpected additionalContext — output: ${_OUT:0:160}"; return
+  fi
+  pass "${_name}"
+}
+
 assert_log_contains() {
   local _name="$1" _needle="$2"
   if [ ! -f "${_IX_DEBUG_LOG:-}" ]; then
@@ -323,24 +338,44 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/README.md","old_str
 # ═════════════════════════════════════════════════════════════════════════════
 section "ix-briefing.sh"
 
+# By default the briefing is the whole payload: the attribution instruction is
+# ~0.9 KB of every prompt, spent so the model can describe work the person just
+# watched happen. IX_ANNOTATE_CHANNEL=modelSuffix (or both) asks for it back.
 run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 if [ "${_RC}" -ne 0 ]; then
-  fail "briefing/default model-authored annotation instruction" "expected exit 0, got ${_RC}"
+  fail "briefing/default injects the session briefing" "expected exit 0, got ${_RC}"
 elif [ -z "${_OUT}" ]; then
-  fail "briefing/default model-authored annotation instruction" "expected JSON output, got nothing"
+  fail "briefing/default injects the session briefing" "expected JSON output, got nothing"
 elif ! echo "${_OUT}" | jq -e '.additionalContext' >/dev/null 2>&1; then
-  fail "briefing/default model-authored annotation instruction" "missing additionalContext — output: ${_OUT:0:120}"
+  fail "briefing/default injects the session briefing" "missing additionalContext — output: ${_OUT:0:120}"
 else
   _ctx=$(echo "${_OUT}" | jq -r '.additionalContext // empty' 2>/dev/null || true)
   if [[ "${_ctx}" != *"[ix] Session briefing:"* ]]; then
-    fail "briefing/default model-authored annotation instruction" "missing session briefing in additionalContext"
-  elif [[ "${_ctx}" != *'must end your response with exactly this final structure and nothing after it:'* ]]; then
-    fail "briefing/default model-authored annotation instruction" "missing model-authored Ix section instruction"
-  elif [[ "${_ctx}" != *'Use 1 or 2 markdown bullets only'* ]]; then
-    fail "briefing/default model-authored annotation instruction" "missing strict Ix bullet-format rule"
+    fail "briefing/default injects the session briefing" "missing session briefing in additionalContext"
+  elif [[ "${_ctx}" == *'must end your response with exactly this final structure and nothing after it:'* ]]; then
+    fail "briefing/default injects the session briefing" "model-authored attribution instruction present by default"
   else
-    pass "briefing/default model-authored annotation instruction"
+    pass "briefing/default injects the session briefing"
   fi
+fi
+
+_RC=0
+_OUT=$(env \
+  TMPDIR="$(mktemp -d -p "${TEST_TMPDIR}")" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  IX_ANNOTATE_MODE="brief" \
+  IX_ANNOTATE_CHANNEL="modelSuffix" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-briefing.sh" < "${_USER_PROMPT_FIXTURE}" 2>/dev/null) || _RC=$?
+_ctx=$(echo "${_OUT}" | jq -r '.additionalContext // empty' 2>/dev/null || true)
+if [[ "${_ctx}" != *'must end your response with exactly this final structure and nothing after it:'* ]]; then
+  fail "briefing/modelSuffix still asks for the Ix section" "missing model-authored Ix section instruction"
+elif [[ "${_ctx}" != *'Use 1 or 2 markdown bullets only'* ]]; then
+  fail "briefing/modelSuffix still asks for the Ix section" "missing strict Ix bullet-format rule"
+else
+  pass "briefing/modelSuffix still asks for the Ix section"
 fi
 
 run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
@@ -380,6 +415,82 @@ _OUT=$(env \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-briefing.sh" < "${_USER_PROMPT_FIXTURE}" 2>/dev/null) || _RC=$?
 assert_additional_context "briefing/model-authored annotation persists on fresh cache" "[ix meta] Attribution:"
+
+section "Pro probe"
+
+# A probe that outlives the hook's budget must still leave an answer behind.
+# It did not: the timestamp was written only after `ix briefing` returned, so a
+# hook killed at its 10s timeout re-probed on the next prompt, and the one after
+# that — a stall on every prompt for as long as the backend was slow.
+_pro_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_pro_tmp}" \
+  IX_HEALTH_CACHE="${_pro_tmp}/ix-healthy" \
+  IX_PRO_PROBE_TIMEOUT=1 \
+  IX_MOCK_BRIEFING_SLEEP=6 \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash -lc '
+    source "'"${HOOKS_DIR}"'/lib/index.sh"
+    _t0=$(date +%s)
+    ix_health_check
+    if ix_check_pro; then printf "pro\n"; else printf "oss\n"; fi
+    printf "%s\n" "$(( $(date +%s) - _t0 ))"
+    printf "%s\n" "$(cat "${IX_PRO_CACHE}.ts" 2>/dev/null || echo MISSING)"
+    printf "%s\n" "$(cat "$IX_HEALTH_CACHE" 2>/dev/null || echo MISSING)"
+  ' 2>/dev/null) || _RC=$?
+
+_pro_verdict=$(printf '%s\n' "${_OUT}" | sed -n '1p')
+_pro_elapsed=$(printf '%s\n' "${_OUT}" | sed -n '2p')
+_pro_stamp=$(printf '%s\n' "${_OUT}" | sed -n '3p')
+_pro_health=$(printf '%s\n' "${_OUT}" | sed -n '4p')
+
+if [ "${_RC}" -ne 0 ]; then
+  fail "pro-probe/a stalled probe still answers" "expected exit 0, got ${_RC}"
+elif [ "${_pro_verdict}" != "oss" ]; then
+  fail "pro-probe/a stalled probe still answers" "expected oss, got: ${_pro_verdict}"
+else
+  pass "pro-probe/a stalled probe still answers"
+fi
+
+if [ "${_pro_stamp}" = "MISSING" ] || [ "${_pro_stamp}" != "${_pro_health}" ]; then
+  fail "pro-probe/the answer is cached for this health window" \
+    "expected the probe stamp to match the health stamp, got '${_pro_stamp}' vs '${_pro_health}'"
+else
+  pass "pro-probe/the answer is cached for this health window"
+fi
+
+# Only where the platform can enforce a bound. On a stock macOS there is no
+# `timeout`, and the stickiness above is what keeps the cost to one prompt.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  if [ "${_pro_elapsed:-99}" -ge 5 ]; then
+    fail "pro-probe/the probe is bounded" "expected the probe to be cut short, took ${_pro_elapsed}s"
+  else
+    pass "pro-probe/the probe is bounded"
+  fi
+fi
+
+# A probe that answers normally is still recorded as Pro.
+_pro_ok_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_RC=0
+_OUT=$(env \
+  TMPDIR="${_pro_ok_tmp}" \
+  IX_HEALTH_CACHE="${_pro_ok_tmp}/ix-healthy" \
+  IX_ERROR_MODE="off" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash -lc '
+    source "'"${HOOKS_DIR}"'/lib/index.sh"
+    ix_health_check
+    if ix_check_pro; then printf "pro\n"; else printf "oss\n"; fi
+  ' 2>/dev/null) || _RC=$?
+if [ "${_RC}" -ne 0 ]; then
+  fail "pro-probe/a healthy probe reports pro" "expected exit 0, got ${_RC}"
+elif [ "${_OUT}" != "pro" ]; then
+  fail "pro-probe/a healthy probe reports pro" "expected pro, got: ${_OUT}"
+else
+  pass "pro-probe/a healthy probe reports pro"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-intercept.sh — Grep and Glob
@@ -537,9 +648,14 @@ else
   pass "lib/ix_looks_like_secret snake-case alternation"
 fi
 
-# Plain symbol → high-confidence exact match → block
+# Plain symbol → high-confidence exact match. The answer is injected either
+# way; IX_BLOCK_ON_HIGH_CONFIDENCE decides whether the native Grep is also
+# denied, and it is off by default (denying costs a whole turn to save a call).
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
-assert_block_decision "intercept/grep plain symbol blocks" "Next: ix read AuthService | ix explain AuthService"
+assert_additional_context "intercept/grep plain symbol augments by default" "[ix text + ix locate]"
+
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
 
 # TODO marker → literal search, hook stays silent
 run_hook ix-intercept.sh "${_GREP_TODO_FIXTURE}"
@@ -550,7 +666,7 @@ run_hook ix-intercept.sh "${_GREP_PHRASE_FIXTURE}"
 assert_empty "intercept/grep phrase literal"
 
 # Dotted symbol → still treated as symbol lookup and blocks on exact match
-run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}"
+run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep dotted symbol blocks" "Found: AuthService (class) at src/auth.ts"
 
 # Regex pattern → literal search, hook stays silent
@@ -588,12 +704,16 @@ assert_log_not_contains "intercept/non-zero locate with no body stays a failure"
 
 # Glob → inventory → block when result set is manageable
 run_hook ix-intercept.sh "${FX_IN}/glob_path.json"
-assert_block_decision "intercept/glob pattern blocks" "Next: ix overview AuthService"
+assert_additional_context "intercept/glob pattern augments by default" "[ix inventory]"
+
+run_hook ix-intercept.sh "${FX_IN}/glob_path.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/glob pattern blocks when asked to" "Next: ix overview AuthService"
 
 # Glob with absolute repo path → normalize before inventory so ix can resolve it
 run_hook ix-intercept.sh "${FX_IN}/glob_path_absolute.json" \
   IX_MOCK_EXPECT_INVENTORY_PATH="myrepo" \
-  IX_MOCK_EXPECT_INVENTORY_KIND="file"
+  IX_MOCK_EXPECT_INVENTORY_KIND="file" \
+  IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/glob absolute path normalized" "Next: ix overview AuthService"
 
 # Empty / no-tool input → exit 0, no output
@@ -618,7 +738,7 @@ run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=
 assert_additional_context "intercept/block escape hatch augments" "[ix text + ix locate]"
 
 # Structured output format for block mode
-run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE=structured
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE=structured IX_BLOCK_ON_HIGH_CONFIDENCE=1
 if [ "${_RC}" -ne 0 ]; then
   fail "intercept/structured block output mode" "expected exit 0, got ${_RC}"
 elif [ -z "${_OUT}" ]; then
@@ -785,9 +905,16 @@ section "ix-bash.sh"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}"
 assert_additional_context "bash/grep intercepted"
 
-# long snake_case alternation in rg should not be suppressed as a secret/token
+# An alternation is a grep expression, not a symbol: nothing in the graph is
+# named `a|b`, so the two ix calls could only come back empty. It must be
+# skipped for THAT reason and not as a suspected secret -- the long snake_case
+# token still has to pass the secret detector (see the lib-level case above).
 run_hook ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
-assert_additional_context "bash/rg alternation intercepted" "ix_ledger_last_turn|ix_ledger_append"
+assert_empty "bash/rg alternation skipped as literal"
+
+run_hook_with_debug_log ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
+assert_log_contains "bash/rg alternation skipped for intent, not as a secret" "SKIP literal intent"
+assert_log_not_contains "bash/rg alternation is not read as a secret" "SKIP looks like secret"
 
 # wrapped cd && rg command should still be intercepted
 run_hook ix-bash.sh "${_BASH_CD_RG_FIXTURE}"
@@ -859,6 +986,7 @@ env \
   IX_LEDGER_MODE="on" \
   IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
+  IX_BLOCK_ON_HIGH_CONFIDENCE="1" \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" >/dev/null 2>/dev/null || _seed_rc=$?
 
@@ -873,8 +1001,23 @@ else
     IX_ERROR_MODE="off" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+  # The summary goes to the person, not into the model's context: it describes
+  # a turn the model just took, so a copy addressed to the model is a line it
+  # pays for and cannot use. IX_ANNOTATE_CHANNEL=both asks for that copy back.
   assert_system_message "annotate/default emits visible ix summary" "Ix surfaced a graph-backed match for AuthService"
-  assert_additional_context "annotate/default also injects ix summary context" "Ix surfaced a graph-backed match for AuthService"
+  assert_no_additional_context "annotate/default does not spend model context on it"
+
+  _RC=0
+  _OUT=$(env \
+    HOME="${_annotate_home}" \
+    TMPDIR="${_annotate_tmp}" \
+    IX_ANNOTATE_MODE="brief" \
+    IX_ANNOTATE_CHANNEL="both" \
+    IX_LEDGER_MODE="on" \
+    IX_ERROR_MODE="off" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+  assert_additional_context "annotate/both still injects ix summary context" "Ix surfaced a graph-backed match for AuthService"
 
   _RC=0
   _OUT=$(env \

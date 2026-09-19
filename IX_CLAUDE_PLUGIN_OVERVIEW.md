@@ -1,6 +1,6 @@
 # ix-claude-plugin — Complete Technical Reference
 
-> Version 2.3.0 | Self-contained reference for AI assistants
+> Version 3.2.0 | Self-contained reference for AI assistants
 
 ---
 
@@ -269,7 +269,9 @@ produced non-zero injected context.
 - Reads the current session's last-turn ledger records
 - Emits one terse attribution sentence keyed to the highest-priority hook type
 - Uses `systemMessage`, `additionalContext`, or both depending on
-  `IX_ANNOTATE_CHANNEL`
+  `IX_ANNOTATE_CHANNEL` — default `systemMessage`, i.e. to the person only. The
+  summary describes a turn the model just took, so a copy addressed to the
+  model is context it pays for and cannot use. `both` asks for that copy back.
 
 ---
 
@@ -287,6 +289,9 @@ ix-errors.sh and ix-lib.sh in one call, creating a single import hub for the gra
 **ix_check_pro()**
 - TTL tied to health check timestamp
 - Caches pro availability in `/tmp/ix-pro`
+- Writes the cache *before* probing and bounds the probe
+  (`IX_PRO_PROBE_TIMEOUT`, default 5s), so a probe killed with the hook still
+  leaves an answer for the next prompt instead of stalling every one of them
 - Exits the calling hook with 0 if Pro is not available
 - Must be called after ix_health_check
 
@@ -1126,7 +1131,7 @@ agents/
   ix-architecture-auditor.md  Structural audit (spawned by ix-architecture)
 
 .claude-plugin/
-  plugin.json             Plugin manifest: name=ix-memory, version=3.1.1
+  plugin.json             Plugin manifest: name=ix-memory, version=3.2.0
   marketplace.json        Marketplace listing for /plugin marketplace add
 
 CLAUDE.md                 Behavioral rules injected into Claude's context window
