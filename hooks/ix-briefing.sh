@@ -51,18 +51,61 @@ ix_log "ENTRY mode=${_mode:-off} channel=${_channel:-?} fresh=${_briefing_fresh}
 BRIEFING=""
 if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   ix_log "RUN ix briefing (stale, Pro available)"
-  ix_log_command ix briefing --format json
+  ix_log_command ix briefing --format text
   _t0=$(ix_now_ms)
   _bfr_err=$(mktemp)
-  BRIEFING=$(ix briefing --format json 2>"$_bfr_err") || {
+  # text, not json: nothing downstream parses this — it is injected verbatim as
+  # additionalContext — and the JSON envelope is pure cost to the model.
+  # Measured on this repo's graph: json 4,350 bytes vs text 1,283 (-70%).
+  #
+  # Not `llm`, despite what it looks like elsewhere: @ix/pro declares only
+  # text|json, and asking for a format it does not have never errors, it
+  # silently renders text. Verified byte-identical output for both.
+  _fetched_ok=1
+  BRIEFING=$(ix briefing --format text 2>"$_bfr_err") || {
     _exit=$?
     ix_capture_async "ix" "ix-briefing" "ix briefing failed" "$_exit" \
       "ix briefing" "$(head -3 "$_bfr_err")"
     rm -f "$_bfr_err"
     BRIEFING=""
+    _fetched_ok=0
   }
   rm -f "$_bfr_err"
-  [ -n "$BRIEFING" ] && { echo "$_now"; echo "$BRIEFING"; } > "$IX_BRIEFING_CACHE"
+
+  # Say nothing rather than say nothing at length. A briefing whose every
+  # section is empty is a header and a revision number — it tells the model
+  # only that Pro is installed, which costs a paragraph to convey.
+  if [ -n "$BRIEFING" ] && ! printf '%s' "$BRIEFING" \
+      | grep -qE '^(Goals|Plans|Recent Decisions|Open Bugs|Recent Changes) \([1-9]'; then
+    ix_log "SKIP briefing (no goals, plans, decisions, bugs or changes)"
+    BRIEFING=""
+  fi
+
+  # A project with a long plan list can run away with the prompt. 2 KB, not the
+  # 1 KB first proposed: a normal text briefing measures ~1.3 KB here, so a 1 KB
+  # cap would truncate the ordinary case rather than the runaway one.
+  _cap="${IX_BRIEFING_MAX_CHARS:-2048}"
+  if [ -n "$BRIEFING" ] && [ "${#BRIEFING}" -gt "$_cap" ]; then
+    ix_log "TRUNCATE briefing ${#BRIEFING} -> ${_cap} chars"
+    BRIEFING="${BRIEFING:0:$_cap}
+… briefing truncated at ${_cap} characters"
+  fi
+
+  # Hold the TTL on any successful fetch, including one deliberately suppressed
+  # above. Caching only non-empty content means a project with nothing to report
+  # re-runs `ix briefing` on every single prompt — the shape of bug P-3 fixed in
+  # the Pro probe, in a second place.
+  #
+  # Spelled out rather than `[ -n "$BRIEFING" ] && echo ...` inside the group:
+  # a trailing test that fails is the group's exit status, and under `set -e`
+  # that ends the hook.
+  if [ "$_fetched_ok" -eq 1 ]; then
+    if [ -n "$BRIEFING" ]; then
+      { echo "$_now"; echo "$BRIEFING"; } > "$IX_BRIEFING_CACHE"
+    else
+      echo "$_now" > "$IX_BRIEFING_CACHE"
+    fi
+  fi
   ix_log "BRIEFING result=${#BRIEFING} chars"
 elif [ "$_briefing_fresh" -eq 1 ]; then
   ix_log "SKIP briefing TTL fresh"

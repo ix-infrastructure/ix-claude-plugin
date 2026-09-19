@@ -17,11 +17,11 @@ Strip `--save` and any following path token from `$ARGUMENTS` before resolving t
 
 ## Pro check (optional)
 
-Run once at the start:
-```bash
-ix briefing --format json 2>&1
-```
-If it returns JSON with a `revision` field, Pro is available. Extract `activeGoals`, `activePlans`, and `openBugs` for use in Pro steps below. If it errors, skip all **[Pro]** labeled steps.
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable. Seen one this session? Pro is available; read `activePlans` and `activeGoals` from it.
+Not seen one? Skip every **[Pro]** step. Asking costs a whole turn to learn
+something already in your context.
 
 ## Goal
 
@@ -85,8 +85,8 @@ If Pro is available (detected above):
 
 Check for existing plans and goals that overlap with this change:
 ```bash
-ix plans --format json
-ix goal list --format json
+ix plans --format text
+ix goal list --format text
 ```
 
 Cross-reference `activePlans` from the briefing to avoid duplicate work. If an existing plan covers these targets, reference it. If `activeGoals` exist, note which goal this change serves.

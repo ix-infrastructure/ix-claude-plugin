@@ -17,11 +17,11 @@ Strip `--save` and any following path token from `$ARGUMENTS` before resolving t
 
 ## Pro check (optional)
 
-Run once at the start:
-```bash
-ix briefing --format json 2>&1
-```
-If it returns JSON with a `revision` field, Pro is available. Extract `recentDecisions` and `openBugs` for use in Pro steps below. If it errors, skip all **[Pro]** labeled steps.
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable. Seen one this session? Pro is available; read `recentDecisions` from it.
+Not seen one? Skip every **[Pro]** step. Asking costs a whole turn to learn
+something already in your context.
 
 ## Goal
 
@@ -99,7 +99,7 @@ Read **the symbol only** — never the full file. If the symbol is a class, read
 
 If Pro is available and `recentDecisions` from the briefing is non-empty, check for decisions affecting this symbol:
 ```bash
-ix decisions --topic <resolved-symbol> --format json
+ix decisions --topic <resolved-symbol> --format text
 ```
 Include any relevant decisions in the output under **Design context**.
 

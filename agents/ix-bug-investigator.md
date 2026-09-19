@@ -91,7 +91,7 @@ Look for: missing null checks, wrong assumptions about input format, incorrect s
 ### Step 6 — Check for related issues (if ix pro available)
 
 ```bash
-ix bugs --format json
+ix bug list --format text
 ```
 
 Are there existing bug reports related to this component?

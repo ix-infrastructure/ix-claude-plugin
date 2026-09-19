@@ -16,12 +16,12 @@ Work through targets methodically. Build the plan incrementally — do not outpu
 
 ### Step 0 — Pro check (optional)
 
-Run once at the start:
-```bash
-ix briefing --format json 2>&1
-```
-
-If it returns JSON with a `revision` field, Pro is available. Extract `activePlans` and `activeGoals` for use in the output. If an existing plan already covers this refactor, reference it and align the plan to that work rather than duplicating it. If it errors, skip all **[Pro]** guidance below.
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable. Seen one this session? Pro is available; take `activePlans`
+and `activeGoals` from it. If an existing plan already covers this refactor,
+reference it and align to that work rather than duplicating it. Not seen one?
+Skip all **[Pro]** guidance below.
 
 ### Step 1 — Identify all targets
 
@@ -93,8 +93,8 @@ Use only to understand what a target *does* if ix explain was insufficient. Skip
 
 Before finalizing the plan, check for existing decisions or plans that constrain this refactor:
 ```bash
-ix decisions --format json
-ix plans --format json
+ix decisions --format text
+ix plans --format text
 ```
 
 - Surface any decisions that apply to the targets — these may restrict how or whether certain changes are safe

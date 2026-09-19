@@ -114,7 +114,22 @@ case "$SUBCOMMAND" in
     if [ -n "${IX_MOCK_BRIEFING_SLEEP:-}" ]; then
       sleep "${IX_MOCK_BRIEFING_SLEEP}"
     fi
-    cat "${IX_MOCK_BRIEFING_FILE:-${FX}/briefing.json}"
+    # Answer in the format that was asked for, as the real CLI does. The mock
+    # used to serve JSON whatever the flag said, which would have hidden the
+    # hook asking for one format and parsing another.
+    _bfr_format="json"
+    for _arg in "$@"; do
+      case "$_arg" in
+        text|llm) _bfr_format="text" ;;
+      esac
+    done
+    if [ -n "${IX_MOCK_BRIEFING_FILE:-}" ]; then
+      cat "${IX_MOCK_BRIEFING_FILE}"
+    elif [ "$_bfr_format" = "text" ]; then
+      cat "${FX}/briefing.txt"
+    else
+      cat "${FX}/briefing.json"
+    fi
     ;;
   status)
     # Called by ix_capture_async (fire-and-forget); silently succeed

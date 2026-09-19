@@ -40,14 +40,23 @@ Required flags:
 - Pass `--format llm` for token-optimized output you read directly (compact
   `key=value` records, typically 2-4x smaller than json). Use `--format json`
   only when you need to machine-parse the result (e.g. extract a field with a
-  tool). Pro commands (`briefing`, `bugs`, `decisions`, `plans`, `goals`, …)
-  still use `--format json`.
+  tool). On **Pro** commands (`briefing`, `bug`, `decisions`, `plans`, `goal`, …)
+  use `--format text`: Pro declares only `text|json`, so `llm` there silently
+  renders text anyway, and json is the expensive one.
 
 ---
 
 ## Pro Commands
 
-Pro features require an Ix Pro backend. Detect with: `ix briefing --format json 2>&1` — returns JSON with a `revision` field if Pro is active, errors otherwise.
+Pro features require an Ix Pro backend. **Detect it from the session briefing,
+not with a command.** The plugin's UserPromptSubmit hook injects an
+`[ix] Session briefing` once per TTL whenever Pro is reachable, so: seen one this
+session → Pro is available; not seen one → treat Pro steps as unavailable.
+
+Running `ix briefing` yourself to find out costs a whole turn to learn something
+already in your context. And never append `2>&1` to an `ix` command: it folds the
+CLI's update notice into stdout, which is how a probe can look like it answered
+when it did not.
 
 | Tier | Commands |
 |---|---|
@@ -67,7 +76,17 @@ is a Pro-only *integrations* command (it opens a browser deep link to link a
 third-party account) — not a way to reach a local backend, which is `ix docker
 start`.
 
-`ix briefing` JSON shape: `{ revision, lastIngestAt, goalCount, activeGoals, activePlans, openBugs, recentDecisions, recentChanges }` — one call provides full project context for all Pro-aware steps.
+The injected briefing is the text rendering, with a `Revision`, a last-ingest
+time, and a section per non-empty group: `Goals`, `Plans`, `Recent Decisions`,
+`Open Bugs`, `Recent Changes`. It is suppressed entirely when every group is
+empty, so its absence means either "no Pro" or "nothing to report" — both of
+which lead to the same place: skip the Pro steps.
+
+⚠ **`--format llm` does nothing on a Pro command.** @ix/pro declares only
+`text|json`, and asking for a format it does not have never errors — it silently
+renders text. Measured byte-identical for `briefing` and `decisions`. Use
+`--format text` on Pro commands and `--format llm` on OSS ones; the saving is
+real either way (`decisions`: json 1,144 B → text 446 B).
 
 ---
 

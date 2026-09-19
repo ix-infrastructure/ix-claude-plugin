@@ -383,7 +383,7 @@ run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 # when only the Pro *stub* is registered, so probing with it reported Pro as
 # available on every OSS install.
 assert_log_not_contains "briefing/pro probe does not use --help" "CMD ix briefing --help"
-assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format json"
+assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format text"
 
 _briefing_repeat_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _RC=0
@@ -459,6 +459,83 @@ if [ "${_pro_stamp}" = "MISSING" ] || [ "${_pro_stamp}" != "${_pro_health}" ]; t
     "expected the probe stamp to match the health stamp, got '${_pro_stamp}' vs '${_pro_health}'"
 else
   pass "pro-probe/the answer is cached for this health window"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-briefing.sh — what the briefing costs
+# ═════════════════════════════════════════════════════════════════════════════
+section "briefing cost"
+
+# text, not json. Nothing downstream parses the briefing — it is injected
+# verbatim — and the JSON envelope is pure cost. Measured on a real graph:
+# json 4,350 bytes vs text 1,283.
+_BFR_TMP=$(mktemp -d -p "${TEST_TMPDIR}")
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_DEBUG="1" IX_DEBUG_LOG="${_BFR_TMP}/debug.log"
+if ! grep -q "ix briefing --format text" "${_BFR_TMP}/debug.log" 2>/dev/null; then
+  fail "briefing/asks for text" "expected --format text in the logged command"
+elif grep -q "ix briefing --format json" "${_BFR_TMP}/debug.log" 2>/dev/null; then
+  fail "briefing/asks for text" "still asking for json"
+else
+  pass "briefing/asks for text"
+fi
+
+# A briefing whose every section is empty is a header and a revision number. It
+# tells the model only that Pro is installed, and costs a paragraph to say so.
+_BFR_EMPTY=$(mktemp -d -p "${TEST_TMPDIR}")
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
+  TMPDIR="${_BFR_EMPTY}"
+if [ -n "${_OUT}" ]; then
+  fail "briefing/says nothing when there is nothing to say" \
+    "expected no injection, got: ${_OUT:0:120}"
+else
+  pass "briefing/says nothing when there is nothing to say"
+fi
+
+# ...but it must still hold the TTL. Caching only non-empty content means a
+# project with nothing to report re-runs `ix briefing` on every single prompt —
+# the same shape as the Pro-probe bug, in a second place.
+_BFR_TTL=$(mktemp -d -p "${TEST_TMPDIR}")
+_RC=0
+_OUT=$(env TMPDIR="${_BFR_TTL}" \
+  IX_HEALTH_CACHE="${_BFR_TTL}/ix-healthy" \
+  IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-briefing.sh" < "${_USER_PROMPT_FIXTURE}" 2>/dev/null) || _RC=$?
+if [ ! -f "${_BFR_TTL}/ix-briefing-cache" ]; then
+  fail "briefing/an empty briefing still holds the TTL" \
+    "expected the cache to be stamped so the next prompt does not re-run ix briefing"
+else
+  pass "briefing/an empty briefing still holds the TTL"
+fi
+
+# A project with a long plan list should not run away with the prompt.
+_BFR_BIG=$(mktemp -d -p "${TEST_TMPDIR}")
+_BIG_FIXTURE="${_BFR_BIG}/big.txt"
+{
+  echo "Ix Briefing"
+  echo "  Revision: 1"
+  echo ""
+  echo "Plans (400)"
+  for _i in $(seq 1 400); do echo "  > plan ${_i} with a reasonably long descriptive title"; done
+} > "${_BIG_FIXTURE}"
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_BRIEFING_MAX_CHARS="512" \
+  IX_MOCK_BRIEFING_FILE="${_BIG_FIXTURE}"
+_ctx=$(echo "${_OUT}" | jq -r '.additionalContext // empty' 2>/dev/null || true)
+if [ -z "${_ctx}" ]; then
+  fail "briefing/caps a runaway briefing" "expected an injection, got nothing"
+elif [ "${#_ctx}" -gt 700 ]; then
+  fail "briefing/caps a runaway briefing" "expected ~512 chars plus a marker, got ${#_ctx}"
+elif [[ "${_ctx}" != *"truncated"* ]]; then
+  fail "briefing/caps a runaway briefing" "truncated without saying so"
+else
+  pass "briefing/caps a runaway briefing"
 fi
 
 # Only where the platform can enforce a bound. On a stock macOS there is no
