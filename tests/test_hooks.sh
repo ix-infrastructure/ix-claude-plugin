@@ -1282,6 +1282,7 @@ _hijack_name="ix_now_ms/symlinked cache dir disables cache safely"
 _RC=0
 _OUT=$(env \
   TMPDIR="${_hijack_tmp}" \
+  XDG_STATE_HOME="${_hijack_tmp}/state" \
   IX_HEALTH_CACHE="${_hijack_tmp}/ix-healthy" \
   IX_MAP_DEBOUNCE_FILE="${_hijack_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_hijack_tmp}/ix-map.lock" \
@@ -1297,6 +1298,191 @@ else
   pass "${_hijack_name}"
 fi
 rm -rf "${_hijack_tmp}" "${_hijack_target}"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-map.sh / ix-ingest.sh — the guarded automatic map
+#
+# Fires on: Stop (ix-map.sh), PostToolUse edits (ix-ingest.sh). Both go through
+# ix_request_auto_map: git root of the payload cwd (not $HOME), only a project
+# `ix status` reports as mapped, per-root debounce in the per-user state dir,
+# then a detached `ix map <root> --silent` from the root with IX_AUTO_MAP=1.
+# The mock appends one line per `ix map` to IX_MOCK_MAP_LOG.
+# ═════════════════════════════════════════════════════════════════════════════
+section "guarded automatic map"
+
+_am_base=$(mktemp -d -p "${TEST_TMPDIR}")
+_am_base=$(cd -P "${_am_base}" && pwd)
+_am_new_repo() {
+  local _d="${_am_base}/$1"
+  mkdir -p "${_d}/src"
+  git -C "${_d}" init -q 2>/dev/null
+  : > "${_d}/src/app.ts"
+  printf '%s' "${_d}"
+}
+_AM_REPO_A=$(_am_new_repo repo-a)
+_AM_REPO_B=$(_am_new_repo repo-b)
+_AM_HOME_REPO=$(_am_new_repo home)
+_AM_PLAIN="${_am_base}/not-a-repo"; mkdir -p "${_AM_PLAIN}"
+_AM_FAKE_HOME="${_am_base}/fake-home"; mkdir -p "${_AM_FAKE_HOME}"
+
+# run_automap <hook> <state_dir> <payload_json> [KEY=VAL ...]
+# State (TMPDIR → per-user state dir) is passed in so a test can share it
+# across calls to exercise the debounce. Sets _RC, _OUT, _IX_DEBUG_LOG.
+run_automap() {
+  local _hook="${HOOKS_DIR}/$1" _state="$2" _payload="$3"; shift 3
+  _IX_DEBUG_LOG="${_state}/ix-hooks.log"
+  _RC=0
+  _OUT=$(printf '%s' "${_payload}" | env \
+    TMPDIR="${_state}" \
+    HOME="${_AM_FAKE_HOME}" \
+    IX_LEDGER_MODE="off" \
+    IX_ERROR_MODE="off" \
+    IX_DEBUG_LOG="${_IX_DEBUG_LOG}" \
+    IX_MOCK_MAP_LOG="${_state}/map.log" \
+    IX_MOCK_MAPPED_ROOTS="${_AM_REPO_A}:${_AM_REPO_B}:${_AM_HOME_REPO}" \
+    "$@" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${_hook}" 2>/dev/null) || _RC=$?
+}
+
+# The map is detached, so it may land just after the hook returns.
+_am_wait_maps() {
+  local _log="$1" _want="$2" _i=0
+  while [ "${_i}" -lt 50 ]; do
+    if [ -f "${_log}" ] && [ "$(wc -l < "${_log}")" -ge "${_want}" ]; then return 0; fi
+    sleep 0.1; _i=$(( _i + 1 ))
+  done
+  return 1
+}
+_am_map_count() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+
+# assert_no_map <name> <state_dir> <log needle>
+assert_no_map() {
+  local _name="$1" _state="$2" _needle="$3"
+  sleep 0.3
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"
+  elif [ -n "${_OUT}" ]; then
+    fail "${_name}" "expected no output, got: ${_OUT:0:100}"
+  elif [ "$(_am_map_count "${_state}/map.log")" -ne 0 ]; then
+    fail "${_name}" "ix map ran: $(head -1 "${_state}/map.log")"
+  elif ! grep -Fq -- "${_needle}" "${_IX_DEBUG_LOG}" 2>/dev/null; then
+    fail "${_name}" "debug log missing '${_needle}'"
+  else
+    pass "${_name}"
+  fi
+}
+
+# assert_mapped <name> <state_dir> <root> <expected count>
+assert_mapped() {
+  local _name="$1" _state="$2" _root="$3" _want="$4" _line
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"; return
+  fi
+  if ! _am_wait_maps "${_state}/map.log" "${_want}"; then
+    fail "${_name}" "expected ${_want} ix map call(s), saw $(_am_map_count "${_state}/map.log")"; return
+  fi
+  sleep 0.2
+  if [ "$(_am_map_count "${_state}/map.log")" -ne "${_want}" ]; then
+    fail "${_name}" "expected exactly ${_want} ix map call(s), saw $(_am_map_count "${_state}/map.log")"; return
+  fi
+  _line=$(tail -1 "${_state}/map.log")
+  if [ "${_line}" != "argv=map ${_root} --silent | IX_AUTO_MAP=1 | cwd=${_root}" ]; then
+    fail "${_name}" "unexpected map call: ${_line}"; return
+  fi
+  pass "${_name}"
+}
+
+_am_stop() { printf '{"session_id":"s","hook_event_name":"Stop","cwd":"%s"}' "$1"; }
+_am_edit() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$2" "$1"; }
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_PLAIN}")"
+assert_no_map "automap/not a git repo → no map" "${_s}" "AUTOMAP skip: no git root"
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_HOME_REPO}")" HOME="${_AM_HOME_REPO}"
+assert_no_map "automap/root is \$HOME → no map" "${_s}" "AUTOMAP skip: no git root"
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_REPO_A}")" IX_MOCK_MAPPED_ROOTS="${_AM_REPO_B}"
+assert_no_map "automap/graphCompleted false → no map" "${_s}" "is not mapped"
+
+# A backend that answers `ix status` with an error instead of JSON.
+_am_bad_status="${_am_base}/bad-status"; mkdir -p "${_am_bad_status}"
+printf '#!/usr/bin/env bash\n[ "$1" = status ] && { echo "backend unreachable"; exit 1; }\nexec "%s/mock-ix.sh" "$@"\n' "${TESTS_DIR}" > "${_am_bad_status}/ix"
+chmod +x "${_am_bad_status}/ix"
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+_RC=0
+_IX_DEBUG_LOG="${_s}/ix-hooks.log"
+_OUT=$(_am_stop "${_AM_REPO_A}" | env TMPDIR="${_s}" HOME="${_AM_FAKE_HOME}" IX_LEDGER_MODE=off IX_ERROR_MODE=off \
+  IX_DEBUG_LOG="${_IX_DEBUG_LOG}" IX_MOCK_MAP_LOG="${_s}/map.log" IX_MOCK_MAPPED_ROOTS="${_AM_REPO_A}" \
+  PATH="${_am_bad_status}:${PATH}" bash "${HOOKS_DIR}/ix-map.sh" 2>/dev/null) || _RC=$?
+assert_no_map "automap/ix status failure → no map" "${_s}" "is not mapped"
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_REPO_A}/src")"
+assert_mapped "automap/mapped project → ix map <root> --silent, IX_AUTO_MAP=1, cwd root" "${_s}" "${_AM_REPO_A}" 1
+
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_REPO_A}")"
+assert_mapped "automap/second Stop inside debounce → no second map" "${_s}" "${_AM_REPO_A}" 1
+assert_log_contains "automap/debounce logged" "AUTOMAP skip: debounce"
+
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_REPO_B}")"
+assert_mapped "automap/a different root is not debounced by the first" "${_s}" "${_AM_REPO_B}" 2
+
+run_automap ix-map.sh "${_s}" "$(_am_stop "${_AM_REPO_A}")" IX_MAP_DEBOUNCE_SECONDS=0
+assert_mapped "automap/after the debounce window the root maps again" "${_s}" "${_AM_REPO_A}" 3
+
+if ls "${_s}"/ix-plugin-cache-*/automap/*.last >/dev/null 2>&1 \
+   && [ ! -e "${_s}/ix-map-last" ] && [ ! -e "${_s}/ix-map.lock" ]; then
+  pass "automap/debounce state is per root in the per-user state dir"
+else
+  fail "automap/debounce state is per root in the per-user state dir" "$(ls -R "${_s}" | head -20)"
+fi
+
+# ix-ingest.sh: never maps the edited file; at most the guarded root map.
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-ingest.sh "${_s}" "$(_am_edit "${_AM_REPO_A}" "${_AM_REPO_A}/src/app.ts")"
+assert_mapped "ingest/edit maps the project root, not the file" "${_s}" "${_AM_REPO_A}" 1
+
+run_automap ix-ingest.sh "${_s}" "$(_am_edit "${_AM_REPO_A}" "${_AM_REPO_A}/src/app.ts")"
+assert_mapped "ingest/edits share the per-root debounce" "${_s}" "${_AM_REPO_A}" 1
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-ingest.sh "${_s}" "$(_am_edit "${_AM_REPO_A}" "${_AM_PLAIN}/scratch.ts")"
+assert_no_map "ingest/edit outside the project → no map" "${_s}" "SKIP file outside project"
+
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-ingest.sh "${_s}" "$(_am_edit "${_AM_PLAIN}" "${_AM_PLAIN}/scratch.ts")"
+assert_no_map "ingest/edit in a non-git dir → no map" "${_s}" "AUTOMAP skip: no git root"
+
+# The mock is as strict as the CLI about what these hooks used to send.
+_RC=0; PATH="${TESTS_DIR}:${PATH}" ix map "${_AM_REPO_A}/src/app.ts" >/dev/null 2>"${_am_base}/err" || _RC=$?
+if [ "${_RC}" -eq 1 ] && grep -q "Map path is not a directory" "${_am_base}/err"; then
+  pass "mock/ix map <file> is rejected like the real CLI"
+else
+  fail "mock/ix map <file> is rejected like the real CLI" "rc=${_RC} err=$(cat "${_am_base}/err")"
+fi
+_RC=0; PATH="${TESTS_DIR}:${PATH}" ix locate AuthService --limit 5 --format json >/dev/null 2>"${_am_base}/err" || _RC=$?
+if [ "${_RC}" -eq 1 ] && grep -q "unknown option '--limit'" "${_am_base}/err"; then
+  pass "mock/ix locate --limit is rejected like the real CLI"
+else
+  fail "mock/ix locate --limit is rejected like the real CLI" "rc=${_RC} err=$(cat "${_am_base}/err")"
+fi
+
+# Caches live in the per-user state dir, keyed by root where per-project.
+_s=$(mktemp -d -p "${TEST_TMPDIR}")
+run_automap ix-briefing.sh "${_s}" "{\"session_id\":\"s\",\"prompt\":\"hi\",\"cwd\":\"${_AM_REPO_A}\"}"
+run_automap ix-briefing.sh "${_s}" "{\"session_id\":\"s\",\"prompt\":\"hi\",\"cwd\":\"${_AM_REPO_B}\"}"
+_am_state=$(ls -d "${_s}"/ix-plugin-cache-* 2>/dev/null | head -1)
+if [ -n "${_am_state}" ] && [ "$(ls "${_am_state}"/briefing-* 2>/dev/null | wc -l | tr -d ' ')" -eq 2 ] \
+   && [ -f "${_am_state}/healthy" ] && [ ! -e "${_s}/ix-briefing-cache" ] && [ ! -e "${_s}/ix-healthy" ] \
+   && [ ! -e "${_s}/ix-pro" ]; then
+  pass "state/briefing cache per root, health + pro in the per-user dir"
+else
+  fail "state/briefing cache per root, health + pro in the per-user dir" "$(ls -R "${_s}" | head -20)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Summary
