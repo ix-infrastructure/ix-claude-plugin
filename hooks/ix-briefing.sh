@@ -8,7 +8,7 @@
 # is enabled, also injects a per-turn instruction telling Claude to end its
 # response with a terse "Ix:" line inferred from the [ix] context it saw.
 #
-# Exit 0 + JSON stdout → injects additionalContext into the prompt
+# Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, added to the prompt
 # Exit 0 + no stdout  → no-op
 
 set -euo pipefail
@@ -21,7 +21,13 @@ INPUT=$(cat)
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
-IX_BRIEFING_CACHE="${TMPDIR:-/tmp}/ix-briefing-cache"
+# One cache per project root, in the per-user state dir. A single shared
+# /tmp/ix-briefing-cache served project A's briefing to a prompt in project B
+# for the rest of the TTL.
+_briefing_dir=$(ix_payload_project_dir "$INPUT" || true)
+_briefing_dir="${_briefing_dir:-$PWD}"
+_briefing_root=$(ix_git_root "$_briefing_dir" || printf '%s' "$_briefing_dir")
+IX_BRIEFING_CACHE="${IX_STATE_DIR}/briefing-$(hash_string "$_briefing_root")"
 _now=$(date +%s)
 _channel="${IX_ANNOTATE_CHANNEL:-modelSuffix}"
 _mode="${IX_ANNOTATE_MODE:-brief}"
@@ -134,5 +140,5 @@ fi
 ix_log "DECISION injecting ${#_context} chars additionalContext"
 ix_log_injection "additionalContext" "$_context"
 
-jq -n --arg ctx "$_context" '{"additionalContext": $ctx}'
+ix_emit_context "UserPromptSubmit" "$_context"
 exit 0

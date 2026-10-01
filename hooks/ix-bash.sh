@@ -8,7 +8,7 @@
 #
 # Output is a CONCISE one-line summary — not raw JSON dumps.
 #
-# Exit 0 + JSON stdout → injects additionalContext, Bash still runs
+# Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, Bash still runs
 # Exit 0 + no stdout  → no-op, Bash runs normally
 
 set -euo pipefail
@@ -91,15 +91,7 @@ ix_log_injection "additionalContext" "$CONTEXT"
 ix_ledger_append "PreToolUse" "Bash" "${#CONTEXT}" "text,locate" "1" "" "$_elapsed_ms" \
   "turned shell grep for ${PATTERN} into a graph-aware search with ranked matches."
 
-if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
-  jq -n --arg ctx "$CONTEXT" '{
-    "hookSpecificOutput": {
-      "hookEventName": "PreToolUse",
-      "permissionDecision": "allow",
-      "additionalContext": $ctx
-    }
-  }'
-else
-  jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
-fi
+# Context only, in both output styles: no permissionDecision. An "allow" here
+# would also skip the user's permission prompt for this tool call.
+ix_emit_context "PreToolUse" "$CONTEXT"
 exit 0

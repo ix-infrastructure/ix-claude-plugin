@@ -53,7 +53,7 @@ This reveals internal structure (members, sub-components) without reading source
 
 **Orphan check:** If `fan_in = 0` AND `fan_out = 0` in the `ix explain` output:
 - Report: "Symbol is a graph orphan — no detected dependencies. Either the graph needs a refresh (`ix map`) or the file has no parseable import/call relationships."
-- Suggest `ix map <file>` as first step.
+- Suggest `ix map --silent` from the project root as the first step (`ix map` takes a directory; it rejects a single file).
 - Stop here — skip Phases 3–5 unless the user specifically asks for source-level inspection.
 
 **Evaluate:** Is the explanation sufficient to answer the question?

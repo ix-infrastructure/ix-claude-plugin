@@ -11,6 +11,10 @@
 # Exports:
 #   IX_HEALTH_CACHE         — path to the health-check TTL file
 #   IX_PRO_CACHE            — path to the pro-check cache file
+#   IX_STATE_DIR            — per-user (0700) dir holding every hook cache
+#   ix_payload_project_dir  — project dir from the hook payload (cwd)
+#   ix_git_root             — canonical git root of a dir (fails for $HOME)
+#   ix_request_auto_map     — the guarded, debounced, detached root `ix map`
 #   ix_health_check         — validate ix availability, emit one-time notice if missing
 #   ix_check_pro            — check ix pro is available; returns 0/1 after ix_health_check
 #   ix_normalize_path_for_ix — convert absolute hook paths into ix-usable relative scopes
@@ -18,7 +22,8 @@
 #   ix_log_injection        — log exact injected hook content with escaped newlines
 #   parse_json              — strip ix header noise, extract first JSON value
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
-#   ix_hook_decide          — emit block/augment/allow output in legacy or structured format
+#   ix_emit_context         — emit hookSpecificOutput.additionalContext for an event
+#   ix_hook_decide          — emit PreToolUse block/augment/allow output (legacy or structured block)
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
 #   ix_run_bounded          — run a command under a wall-clock bound where possible
@@ -26,9 +31,6 @@
 #   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
 #   ix_summarize_locate     — summarise locate results → LOC_PART
-
-IX_HEALTH_CACHE="${TMPDIR:-/tmp}/ix-healthy"
-IX_PRO_CACHE="${TMPDIR:-/tmp}/ix-pro"
 
 # ── Portable millisecond timestamp ───────────────────────────────────────────
 # Usage: ix_now_ms
@@ -81,6 +83,120 @@ if [ -d "$_IX_CACHE_DIR" ] && [ -O "$_IX_CACHE_DIR" ] && [ ! -L "$_IX_CACHE_DIR"
 else
   IX_NOW_MS_CACHE=""
 fi
+
+# ── Per-user state directory ─────────────────────────────────────────────────
+# Every cache the hooks keep (health, Pro flag, briefing, auto-map debounce)
+# lives here, never at a fixed name in a shared /tmp: those names were
+# predictable, shared by every user on the machine, and shared by every project
+# a user had open. The uid-scoped dir above is preferred; when it is unusable
+# (a co-tenant pre-created or symlinked it), fall back to the XDG state dir,
+# and failing that to a private dir for this one invocation (no caching).
+if [ -n "$IX_NOW_MS_CACHE" ]; then
+  IX_STATE_DIR="$_IX_CACHE_DIR"
+else
+  IX_STATE_DIR=""
+  if [ -n "${XDG_STATE_HOME:-}" ] || [ -n "${HOME:-}" ]; then
+    _ix_xdg_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/ix-claude-plugin"
+    { mkdir -p "$_ix_xdg_dir" && chmod 700 "$_ix_xdg_dir"; } 2>/dev/null || true
+    if [ -d "$_ix_xdg_dir" ] && [ -O "$_ix_xdg_dir" ] && [ ! -L "$_ix_xdg_dir" ]; then
+      IX_STATE_DIR="$_ix_xdg_dir"
+    fi
+  fi
+  [ -n "$IX_STATE_DIR" ] || IX_STATE_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t ixstateXXXXXX)
+fi
+IX_HEALTH_CACHE="${IX_STATE_DIR}/healthy"
+IX_PRO_CACHE="${IX_STATE_DIR}/pro"
+
+# ── Project root ─────────────────────────────────────────────────────────────
+# Usage: ix_payload_project_dir "$HOOK_INPUT"
+# The project the host is working in: the hook payload's `cwd`, else
+# $CLAUDE_PROJECT_DIR. Never the plugin dir and never the hook's own $PWD guess.
+ix_payload_project_dir() {
+  local _dir
+  _dir=$(printf '%s' "${1:-}" | jq -r '.cwd // empty' 2>/dev/null || true)
+  [ -n "$_dir" ] || _dir="${CLAUDE_PROJECT_DIR:-}"
+  [ -n "$_dir" ] || return 1
+  printf '%s\n' "$_dir"
+}
+
+# Usage: ix_git_root DIR
+# Prints the canonical git top-level of DIR. Returns 1 when DIR is not inside a
+# git work tree, or when the top-level is $HOME (a dotfiles repo is not a
+# project, and mapping it would walk the whole home directory).
+ix_git_root() {
+  local _dir="${1:-}" _root _home
+  { [ -n "$_dir" ] && [ -d "$_dir" ]; } || return 1
+  _root=$(git -C "$_dir" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ -n "$_root" ] || return 1
+  _root=$(cd -P "$_root" 2>/dev/null && pwd) || return 1
+  if [ -n "${HOME:-}" ]; then
+    _home=$(cd -P "$HOME" 2>/dev/null && pwd) || _home="$HOME"
+    [ "$_root" != "$_home" ] || return 1
+  fi
+  printf '%s\n' "$_root"
+}
+
+# ── Guarded automatic map ────────────────────────────────────────────────────
+# Usage: ix_request_auto_map PROJECT_DIR
+# The only way a hook may run `ix map`. It maps the project ROOT — `ix map`
+# rejects a file ("Map path is not a directory") — and only when all hold:
+#   1. PROJECT_DIR is in a git work tree whose root is not $HOME.
+#   2. No attempt for this root inside IX_MAP_DEBOUNCE_SECONDS (default 300).
+#      The window is per root, kept in the per-user state dir, and claimed
+#      before the backend is asked, so an unmapped project or a down backend is
+#      asked at most once per window too.
+#   3. `ix status --root <root>` says the graph is complete. An automatic map
+#      never creates a workspace; any failure, timeout or non-JSON is a skip.
+# The map itself is detached: it runs `ix map <root> --silent` from the root
+# with IX_AUTO_MAP=1 (the CLI then skips it against a remote backend) and
+# outlives the hook, so the hook's own timeout can no longer kill it midway.
+# Ix holds a per-workspace map lock, so the plugin keeps no lock of its own.
+# Always returns 0.
+ix_request_auto_map() {
+  local _dir="${1:-}" _root _stamp_dir _stamp _now _last _status
+  if ! _root=$(ix_git_root "$_dir"); then
+    ix_log "AUTOMAP skip: no git root (or root is \$HOME) for ${_dir:-<none>}"
+    return 0
+  fi
+
+  _stamp_dir="${IX_STATE_DIR}/automap"
+  [ -d "$_stamp_dir" ] || mkdir -p "$_stamp_dir" 2>/dev/null || true
+  _stamp="${_stamp_dir}/$(hash_string "$_root").last"
+  _now=$(date +%s)
+  if [ -f "$_stamp" ]; then
+    _last=$(head -c 32 "$_stamp" 2>/dev/null | tr -dc '0-9' || true)
+    if [ -n "$_last" ] && (( _now - _last < ${IX_MAP_DEBOUNCE_SECONDS:-300} )); then
+      ix_log "AUTOMAP skip: debounce ($(( _now - _last ))s ago) for $_root"
+      return 0
+    fi
+  fi
+  echo "$_now" > "$_stamp" 2>/dev/null || true
+
+  ix_log_command ix status --format json --root "$_root"
+  if command -v timeout >/dev/null 2>&1; then
+    _status=$(cd "$_root" && timeout "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" \
+      ix status --format json --root "$_root" 2>/dev/null) || _status=""
+  else
+    _status=$(cd "$_root" && ix status --format json --root "$_root" 2>/dev/null) || _status=""
+  fi
+  if ! printf '%s' "$(parse_json "$_status")" | jq -e '.graphCompleted == true' >/dev/null 2>&1; then
+    ix_log "AUTOMAP skip: $_root is not mapped (or ix status failed)"
+    return 0
+  fi
+
+  ix_log "AUTOMAP run: ix map $_root --silent (detached)"
+  ix_log_command ix map "$_root" --silent
+  (
+    cd "$_root" || exit 0
+    export IX_AUTO_MAP=1
+    if command -v setsid >/dev/null 2>&1; then
+      setsid ix map "$_root" --silent </dev/null >/dev/null 2>&1 &
+    else
+      nohup ix map "$_root" --silent </dev/null >/dev/null 2>&1 &
+    fi
+  ) || true
+  return 0
+}
 
 _ix_select_now_ms_backend() {
   local _out
@@ -176,7 +292,7 @@ hash_string() {
 ix_health_check() {
   local _now _cached _ix_notify_file
   if ! command -v ix >/dev/null 2>&1; then
-    _ix_notify_file="${TMPDIR:-/tmp}/ix-unavailable-notified"
+    _ix_notify_file="${IX_STATE_DIR}/unavailable-notified"
     if [ ! -f "$_ix_notify_file" ]; then
       : > "$_ix_notify_file" 2>/dev/null || true
       jq -cn '{"systemMessage": "ix not found — hooks are inactive. Install ix from https://ix.infrastructure or run: npm i -g @ix/cli"}'
@@ -426,11 +542,34 @@ ix_confidence_gate() {
   fi
 }
 
-# ── Hook output decision helper ──────────────────────────────────────────────
+# ── Hook output: model context ───────────────────────────────────────────────
+# Usage: ix_emit_context <hookEventName> <text>
+# Claude Code reads hook-supplied model context only from
+# hookSpecificOutput.additionalContext, and only when hookSpecificOutput's
+# hookEventName names the event that fired the hook (it rejects a mismatch). A
+# top-level `additionalContext` is dropped with "Hook JSON output had
+# unrecognized keys (ignored): additionalContext" (Claude Code 2.1.287 hook
+# output schema; https://code.claude.com/docs/en/hooks#add-context-for-claude).
+# No permissionDecision: this only adds context. A PreToolUse "allow" would also
+# skip the user's permission prompt for the tool call it rides on.
+ix_emit_context() {
+  jq -cn --arg e "$1" --arg c "$2" \
+    '{"hookSpecificOutput": {"hookEventName": $e, "additionalContext": $c}}'
+}
+
+# ── Hook output decision helper (PreToolUse) ─────────────────────────────────
 # Usage: ix_hook_decide <mode> <content>
 #   mode    — "block" | "augment" | "allow"
 #   content — reason string (block) or context string (augment); ignored for allow
-# Emits the correct Claude Code JSON and exits.
+# Emits the Claude Code PreToolUse JSON and exits.
+#   block   — the tool call is denied and `content` is what the model receives
+#             in place of the tool result. Structured: permissionDecision
+#             "deny" + permissionDecisionReason (the enum is allow|deny|ask|
+#             defer; "block" fails validation). Legacy: top-level
+#             decision "block" + reason, which Claude Code still honours for
+#             PreToolUse as a deny with that reason.
+#   augment — the tool runs; `content` reaches the model next to its result.
+#   allow   — no output; the tool runs under the user's normal permissions.
 ix_hook_decide() {
   local _mode="$1"
   local _content="${2:-}"
@@ -440,8 +579,8 @@ ix_hook_decide() {
         jq -cn --arg r "$_content" '{
           "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "block",
-            "reason": $r
+            "permissionDecision": "deny",
+            "permissionDecisionReason": $r
           }
         }'
       else
@@ -449,17 +588,7 @@ ix_hook_decide() {
       fi
       ;;
     augment)
-      if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
-        jq -cn --arg c "$_content" '{
-          "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "additionalContext": $c
-          }
-        }'
-      else
-        jq -cn --arg c "$_content" '{"additionalContext": $c}'
-      fi
+      ix_emit_context "PreToolUse" "$_content"
       ;;
     allow|*)
       exit 0

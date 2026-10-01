@@ -33,6 +33,18 @@
 #                            would fail. It is invisible while the code under
 #                            test tolerates a non-zero exit -- which is exactly
 #                            what these variables exist to test.
+#   IX_MOCK_MAPPED_ROOTS   — `:`-separated roots for which `ix status --format
+#                            json --root R` reports graphCompleted=true (all
+#                            others report false, as the real CLI does for a
+#                            workspace that was never mapped)
+#   IX_MOCK_MAP_LOG        — `ix map` appends "argv=… | IX_AUTO_MAP=… | cwd=…"
+#
+# Strict where the real CLI is strict, so a hook cannot keep calling something
+# that only ever worked against this mock:
+#   `ix map <file>`         → exit 1 "Map path is not a directory" (Ix #545)
+#   `ix map --unknown`      → exit 1 "unknown option"
+#   `ix locate … --limit`   → exit 1 "unknown option '--limit'"
+#   `ix smells … --path`    → exit 1 "unknown option '--path'"
 
 SUBCOMMAND="${1:-}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,11 +56,43 @@ if [ "${IX_MOCK_FAIL:-0}" = "1" ] && [ "$SUBCOMMAND" != "map" ] && [ "$SUBCOMMAN
   exit 1
 fi
 
+# `ix status --format json` — the guard the automatic map consults. Bare
+# `ix status` (ix_capture_async) still falls through to the silent branch below.
+if [ "$SUBCOMMAND" = "status" ]; then
+  _st_json=0; _st_root=""
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --format) [ "${2:-}" = "json" ] && _st_json=1; shift 2 ;;
+      --root) _st_root="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$_st_json" -eq 1 ]; then
+    _st_done=false
+    _st_ifs="$IFS"; IFS=:
+    for _st_mapped in ${IX_MOCK_MAPPED_ROOTS:-}; do
+      [ -n "$_st_mapped" ] && [ "$_st_mapped" = "$_st_root" ] && _st_done=true
+    done
+    IFS="$_st_ifs"
+    printf '{"backend":"ok","graphCompleted":%s,"mapCompleted":%s,"currentRev":0,"lastIngestAt":null,"staleFiles":0,"sampleChangedFiles":[]}\n' \
+      "$_st_done" "$_st_done"
+    exit 0
+  fi
+  exit 0
+fi
+
 case "$SUBCOMMAND" in
   text)
     cat "${IX_MOCK_TEXT_FILE:-${FX}/text_results.json}"
     ;;
   locate)
+    for _arg in "$@"; do
+      if [ "$_arg" = "--limit" ]; then
+        echo "error: unknown option '--limit'" >&2
+        exit 1
+      fi
+    done
     cat "${IX_MOCK_LOCATE_FILE:-${FX}/locate_resolved.json}"
     # Ix#539 makes an unresolved target exit non-zero while still printing its
     # body. Simulated separately from IX_MOCK_FAIL, which suppresses output too:
@@ -103,7 +147,35 @@ case "$SUBCOMMAND" in
     if [ -n "${IX_MOCK_INVENTORY_EXIT:-}" ]; then exit "${IX_MOCK_INVENTORY_EXIT}"; fi
     ;;
   map)
+    shift
+    _map_path=""
+    _map_argv=("map" "$@")
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --format|--level|--min-confidence|--max-items|--sort|--fields) shift 2 ;;
+        --all-items|--graph|--list|--full|--verbose|--silent|--pretty|--quiet|-h|--help) shift ;;
+        -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
+        *) _map_path="$1"; shift ;;
+      esac
+    done
+    if [ -n "$_map_path" ] && [ ! -d "$_map_path" ]; then
+      echo "Map path is not a directory: $_map_path" >&2
+      exit 1
+    fi
+    if [ -n "${IX_MOCK_MAP_LOG:-}" ]; then
+      printf 'argv=%s | IX_AUTO_MAP=%s | cwd=%s\n' \
+        "${_map_argv[*]}" "${IX_AUTO_MAP:-}" "$PWD" >> "$IX_MOCK_MAP_LOG"
+    fi
     exit 0
+    ;;
+  smells)
+    for _arg in "$@"; do
+      if [ "$_arg" = "--path" ]; then
+        echo "error: unknown option '--path'" >&2
+        exit 1
+      fi
+    done
+    echo '[]'
     ;;
   briefing)
     if [ "${2:-}" = "--help" ]; then

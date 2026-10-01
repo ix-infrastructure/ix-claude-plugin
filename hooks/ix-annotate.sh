@@ -6,6 +6,16 @@
 # Fires on Stop, reads the current turn's ix ledger records, and emits a concise
 # factual summary on the configured channel. Model-suffix instruction handling
 # lives in ix-briefing.sh, so this hook stays silent for modelSuffix-only mode.
+#
+# The summary always goes out as systemMessage (shown to the user), whatever
+# the channel. A Stop hook's only model channel is
+# hookSpecificOutput.additionalContext, and Claude Code treats it as feedback
+# that continues the conversation: the context lands after Claude's response
+# and the model takes another turn to act on it (Claude Code 2.1.287;
+# https://code.claude.com/docs/en/hooks#stop-decision-control). An attribution
+# note is not worth a model turn on every stop, so the `additionalContext` and
+# `both` channels fall back to systemMessage here. The top-level
+# `additionalContext` this hook used to print was never read (unrecognized key).
 
 set -euo pipefail
 
@@ -40,18 +50,8 @@ esac
 if ! declare -F ix_ledger_last_turn >/dev/null 2>&1; then
   _fallback="Ix attribution unavailable: ledger helpers are missing."
   ix_log "DECISION fallback missing ledger helper"
-  ix_log_injection "$_channel" "$_fallback"
-  case "$_channel" in
-    systemMessage)
-      jq -n --arg msg "$_fallback" '{"systemMessage": $msg}'
-      ;;
-    additionalContext)
-      jq -n --arg ctx "$_fallback" '{"additionalContext": $ctx}'
-      ;;
-    both)
-      jq -n --arg msg "$_fallback" '{"systemMessage": $msg, "additionalContext": $msg}'
-      ;;
-  esac
+  ix_log_injection "systemMessage" "$_fallback"
+  jq -n --arg msg "$_fallback" '{"systemMessage": $msg}'
   exit 0
 fi
 
@@ -98,16 +98,6 @@ fi
 [ -n "$_summary" ] || { ix_log "SKIP no attributable ix activity"; exit 0; }
 
 ix_log "DECISION emit summary chars=${#_summary}"
-ix_log_injection "$_channel" "$_summary"
-case "$_channel" in
-  systemMessage)
-    jq -n --arg msg "$_summary" '{"systemMessage": $msg}'
-    ;;
-  additionalContext)
-    jq -n --arg ctx "$_summary" '{"additionalContext": $ctx}'
-    ;;
-  both)
-    jq -n --arg msg "$_summary" '{"systemMessage": $msg, "additionalContext": $msg}'
-    ;;
-esac
+ix_log_injection "systemMessage" "$_summary"
+jq -n --arg msg "$_summary" '{"systemMessage": $msg}'
 exit 0

@@ -8,7 +8,7 @@
 # significant dependents. High-risk edits get a clear signal before damage
 # is done.
 #
-# Exit 0 + JSON stdout → injects additionalContext, tool still runs
+# Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, tool still runs
 # Exit 0 + no stdout  → no-op, tool runs normally
 
 set -euo pipefail
@@ -121,15 +121,7 @@ ix_log "DECISION warn risk=$RISK_LEVEL deps=$EFFECTIVE_DEPS (${_elapsed_ms}ms)"
 ix_ledger_append "PreToolUse" "Edit" "${#WARNING}" "impact" "1" "${RISK_LEVEL:-}" "$_elapsed_ms" \
   "checked impact for ${FILENAME} and flagged ${RISK_LEVEL} risk across ${EFFECTIVE_DEPS} dependents."
 
-if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
-  jq -n --arg ctx "$WARNING" '{
-    "hookSpecificOutput": {
-      "hookEventName": "PreToolUse",
-      "permissionDecision": "allow",
-      "additionalContext": $ctx
-    }
-  }'
-else
-  jq -n --arg ctx "$WARNING" '{"additionalContext": $ctx}'
-fi
+# Context only, in both output styles: no permissionDecision. An "allow" here
+# would also skip the user's permission prompt for this tool call.
+ix_emit_context "PreToolUse" "$WARNING"
 exit 0

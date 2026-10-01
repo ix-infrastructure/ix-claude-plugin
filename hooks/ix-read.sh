@@ -15,7 +15,7 @@
 # Format: "[ix] file.ts — N entities: A (class), B (fn), C (fn) | 12 dependents — HIGH RISK"
 # Not raw JSON dumps. Designed to be acted on, not skipped over.
 #
-# Exit 0 + JSON stdout → injects additionalContext, Read still runs
+# Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, Read still runs
 # Exit 0 + no stdout  → no-op, Read runs normally
 
 set -euo pipefail
@@ -193,15 +193,7 @@ CONTEXT="${CONTEXT} | ${READ_HINT}"
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_ledger_append "PreToolUse" "Read" "${#CONTEXT}" "inventory,overview,impact" "${_confidence:-1}" "${RISK_LEVEL:-}" "$_elapsed_ms"
 
-if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
-  jq -n --arg ctx "$CONTEXT" '{
-    "hookSpecificOutput": {
-      "hookEventName": "PreToolUse",
-      "permissionDecision": "allow",
-      "additionalContext": $ctx
-    }
-  }'
-else
-  jq -n --arg ctx "$CONTEXT" '{"additionalContext": $ctx}'
-fi
+# Context only, in both output styles: no permissionDecision. An "allow" here
+# would also skip the user's permission prompt for this tool call.
+ix_emit_context "PreToolUse" "$CONTEXT"
 exit 0

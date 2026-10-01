@@ -40,8 +40,8 @@ hooks/
   ix-intercept.sh            Grep / Glob interception
   ix-bash.sh                 grep / rg detection inside Bash commands
   ix-pre-edit.sh             pre-edit impact warning
-  ix-ingest.sh               post-edit single-file map
-  ix-map.sh                  async Stop-time full map refresh
+  ix-ingest.sh               post-edit guarded root-map request
+  ix-map.sh                  async Stop-time guarded root-map request
   ix-read.sh                 disabled placeholder; not registered
   ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh
 tests/
