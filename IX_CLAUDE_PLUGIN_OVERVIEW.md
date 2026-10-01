@@ -94,8 +94,7 @@ hook-internal parsing — that is intentional.)
 
 | Command | What it does |
 |---------|-------------|
-| `ix map` | Builds or refreshes the full code graph by parsing the current working directory. Expensive — runs async after edits. Do not run for exploration; use `ix subsystems` instead (reads cached data). |
-| `ix map <file>` | Updates the graph for a single file. Runs after Claude edits a file to keep the graph current. |
+| `ix map [dir]` | Builds or refreshes the full code graph for a directory (default: the current one). Takes a directory only — a file path is rejected with "Map path is not a directory". Expensive; the hooks run it automatically only through the guarded root map (see ix-map.sh). Do not run for exploration; use `ix subsystems` instead (reads cached data). |
 | `ix status` | Health check — returns whether the ix server is running and reachable. Slow (6s+) — hooks avoid it and instead rely on commands failing fast. |
 | `ix docker start` | Starts the local backend (ArangoDB + memory layer). What to run when `ix status` reports the backend unreachable. |
 
@@ -108,7 +107,7 @@ for a `revision` field. If absent, all Pro steps are skipped gracefully.
 |---------|-------------|
 | `ix briefing --format json` | Returns session context: activeGoals, activePlans, openBugs, recentDecisions, recentChanges. Injected by ix-briefing.sh hook once per 10 minutes. |
 | `ix decisions` | Returns recorded architectural decisions. Used by ix-investigate, ix-debug, ix-architecture to surface relevant past decisions. |
-| `ix bugs` | Lists open bug records. Used by ix-debug and ix-impact to check if any known bugs touch the blast radius. |
+| `ix bug list --format text` | Lists bug records (Ix Pro only). Used by ix-debug and ix-impact to check if any known bugs touch the blast radius. |
 | `ix bug create "<title>" --severity <level> --affects <symbol>` | Creates a new bug record. ix-debug suggests this at the end of an investigation for new bugs. |
 | `ix plans` | Lists active implementation plans. Used by ix-plan and ix-safe-refactor-planner to avoid duplicate work. |
 | `ix plan create "<title>" --goal <id>` | Creates a new plan to track a change set. |
@@ -149,8 +148,8 @@ registered in `hooks/hooks.json`, so no Read hook runs at runtime.
 Fires at the start of each user prompt. Requires Ix Pro — is a complete no-op
 otherwise.
 
-- 10-minute TTL cache (`/tmp/ix-briefing-cache`). Skips if briefing was injected
-  within the last 10 minutes.
+- 10-minute TTL cache, one per project root, in the per-user state dir
+  (`IX_STATE_DIR`). Skips if briefing was injected within the last 10 minutes.
 - Calls `ix briefing --format json`
 - Injects: `[ix] Session briefing: <json>` containing activeGoals, activePlans,
   openBugs, recentDecisions
@@ -238,9 +237,10 @@ The edit still proceeds. This is informational only.
 
 Fires after Claude modifies a file. Runs async (does not block Claude's response).
 
-1. Runs `ix map <file_path>` with one automatic retry on failure
-2. On success: injects `[ix] Graph updated — mapped: <path>`
-3. Keeps the graph current so the next query reflects the changed file
+- Never maps the edited file (`ix map` rejects a file path)
+- When the file is inside the project, requests the guarded root map
+  (`ix_request_auto_map`, same rules and per-root debounce as ix-map.sh)
+- Injects nothing
 
 ---
 
@@ -249,9 +249,14 @@ Fires after Claude modifies a file. Runs async (does not block Claude's response
 Fires after Claude finishes each response. Runs asynchronously through Claude
 Code's hook runner.
 
-- No-op if a full map ran within `IX_MAP_DEBOUNCE_SECONDS` or another map already
-  holds the lock
-- Runs `ix map` (full graph refresh) in the background when not skipped
+- Requests the guarded root map (`ix_request_auto_map` in ix-lib.sh), which runs
+  only when all hold: the payload `cwd` is in a git repo whose root is not
+  `$HOME`; no attempt for that root within `IX_MAP_DEBOUNCE_SECONDS` (per root,
+  in the per-user state dir); `ix status --format json --root <root>` reports
+  `graphCompleted: true` (never creates a workspace)
+- Then runs `ix map <root> --silent` from the root with `IX_AUTO_MAP=1`,
+  detached so the hook timeout cannot kill it; Ix's own per-workspace lock
+  coalesces concurrent maps
 - Ensures the next session or prompt starts with an up-to-date graph
 - Does nothing visible — no additionalContext injected
 
@@ -279,7 +284,7 @@ Sourced by all hooks via `hooks/lib/index.sh` (barrel file that sources both
 ix-errors.sh and ix-lib.sh in one call, creating a single import hub for the graph).
 
 **ix_health_check()**
-- 300-second TTL cache in `/tmp/ix-healthy`
+- 300-second TTL cache in the per-user state dir (`$IX_STATE_DIR/healthy`)
 - Marks the last time ix was confirmed reachable
 - Does NOT run `ix status` (which takes 6s+ and would reliably timeout 10s hooks)
 - Relies on ix commands failing fast if the server is down
@@ -420,7 +425,7 @@ Also run `ix overview <resolved-symbol>` if it's a class or module (reveals inte
 structure without reading source).
 
 Orphan check: if `fan_in = 0 AND fan_out = 0` → report graph orphan, suggest
-`ix map <file>`, stop (skip phases 3-5).
+refreshing with `ix map --silent` from the project root, stop (skip phases 3-5).
 
 Early stop: if explain answers the question, skip to output.
 
@@ -489,7 +494,7 @@ Cross-reference callers + dependents + importers to identify:
 
 **Phase 4 — Known bugs [Pro]:**
 If Pro available and `openBugs` non-empty:
-`ix bugs --format json`
+`ix bug list --format text` (Ix Pro only)
 Cross-reference open bugs against direct callers/dependents. Any matching open bug
 escalates the risk verdict.
 
@@ -840,13 +845,13 @@ failure candidates with evidence.
 **Step 0 — Context (only if subsystem is unfamiliar or bug crosses boundaries):**
 ```
 ix subsystems --format json
-ix locate "$SYMPTOM" --limit 5 --format json
+ix locate "$SYMPTOM" --format json
 ```
 Optionally: `ix overview <likely-subsystem>` to understand subsystem boundaries.
 
 **Step 1 — Locate the entry point (run in parallel):**
 ```
-ix locate "$SYMPTOM" --limit 5 --format json
+ix locate "$SYMPTOM" --format json
 ix text   "$SYMPTOM" --limit 10 --format json
 ```
 Identify the most likely entry point. If ambiguous, prefer closest name/path match.
@@ -872,7 +877,7 @@ transitions, unhandled edge cases.
 Hard limit: 2 reads. Report candidates and uncertainty if still unclear.
 
 **Step 6 — Check for related issues [Pro]:**
-`ix bugs --status open --format json`
+`ix bug list --format text` (Ix Pro only)
 Are there existing bug reports related to this component?
 
 **Stop conditions:** Stop as soon as you can state "the most likely cause is X in
@@ -947,7 +952,7 @@ If an existing plan already covers this refactor, align to it rather than duplic
 **Step 1 — Identify all targets:**
 Parse input as list of targets (files or symbols). If it's a description:
 ```
-ix locate "$INPUT" --limit 5 --format json
+ix locate "$INPUT" --format json
 ix text   "$INPUT" --limit 10 --format json
 ```
 Identify 2-5 concrete symbols/files. If spanning unfamiliar subsystems:
@@ -1079,9 +1084,9 @@ User types: "how does the auth middleware work?"
    - injects: `[ix] ⚠️ HIGH-RISK EDIT — auth.ts has 23 dependents. Hot spots: validateToken, refreshSession, checkScope. → Run tests on all routes that import this middleware.`
 
 8. Edit proceeds.
-9. ix-ingest.sh fires AFTER Edit (async) → runs ix map middleware/auth.ts → graph updated
+9. ix-ingest.sh fires AFTER Edit (async) → requests the guarded root map (debounced per root)
 10. Claude finishes responding with one short final line like: `Ix: surfaced symbol matches before search, flagged file risk before read, and warned about a high-risk edit.`
-11. ix-map.sh fires (async, Stop) → runs ix map (full refresh) in background
+11. ix-map.sh fires (async, Stop) → guarded `ix map <root> --silent`, detached, if the project is mapped and not debounced
 
 ---
 
