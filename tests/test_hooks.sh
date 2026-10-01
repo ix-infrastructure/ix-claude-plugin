@@ -23,6 +23,87 @@ pass() { printf 'PASS  %s\n' "$1"; PASS_COUNT=$(( PASS_COUNT + 1 )); }
 fail() { printf 'FAIL  %s — %s\n' "$1" "$2"; FAIL_COUNT=$(( FAIL_COUNT + 1 )); }
 section() { printf '\n── %s ─────────────────────────────────────────────────\n' "$1"; }
 
+# ── Claude Code hook output schema ───────────────────────────────────────────
+# What Claude Code 2.1.287 accepts on a command hook's stdout, from the zod
+# hook-output schemas in its binary and https://code.claude.com/docs/en/hooks:
+#   top level: continue, suppressOutput, stopReason, decision (approve|block),
+#              reason, systemMessage, terminalSequence, hookSpecificOutput
+#   hookSpecificOutput: hookEventName must equal the firing event, plus that
+#              event's own keys (PreToolUse: permissionDecision
+#              allow|deny|ask|defer, permissionDecisionReason, updatedInput,
+#              additionalContext; UserPromptSubmit/Stop/PostToolUse:
+#              additionalContext; ...)
+# Anything else is dropped with "Hook JSON output had unrecognized keys
+# (ignored)" -- which is what happened to every top-level additionalContext
+# this plugin printed. Two plugin rules are checked alongside (prefix
+# "policy:"): never emit permissionDecision "allow" (it skips the user's
+# permission prompt), and never give a Stop hook additionalContext (it makes
+# the model take another turn).
+
+# hook_event_for <hook.sh> — the event hooks/hooks.json registers it under.
+hook_event_for() {
+  case "$1" in
+    ix-briefing.sh) echo "UserPromptSubmit" ;;
+    ix-intercept.sh|ix-bash.sh|ix-pre-edit.sh|ix-read.sh) echo "PreToolUse" ;;
+    ix-ingest.sh) echo "PostToolUse" ;;
+    ix-annotate.sh|ix-map.sh) echo "Stop" ;;
+    *) echo "" ;;
+  esac
+}
+
+# host_schema_violations <event> <stdout> — prints one line per violation.
+host_schema_violations() {
+  local _event="$1" _json="$2"
+  [ -n "${_json}" ] || return 0
+  printf '%s' "${_json}" | jq -rs --arg ev "${_event}" '
+    def top_keys: ["continue","suppressOutput","stopReason","decision","reason",
+                   "systemMessage","terminalSequence","hookSpecificOutput"];
+    def hso_keys: {
+      "PreToolUse": ["hookEventName","permissionDecision","permissionDecisionReason",
+                     "updatedInput","additionalContext"],
+      "PostToolUse": ["hookEventName","additionalContext","classifierContext",
+                      "updatedToolOutput","updatedMCPToolOutput"],
+      "UserPromptSubmit": ["hookEventName","additionalContext","sessionTitle",
+                           "suppressOriginalPrompt"],
+      "Stop": ["hookEventName","additionalContext"]
+    };
+    if length != 1 then "stdout is \(length) JSON values, not one object"
+    elif (.[0] | type) != "object" then "stdout is a JSON \(.[0] | type), not an object"
+    else .[0] |
+      ( (keys - top_keys)[] | "unrecognized top-level key: \(.)" ),
+      ( select(has("decision") and ((.decision == "approve" or .decision == "block") | not))
+        | "decision must be approve|block, got: \(.decision)" ),
+      ( select(has("hookSpecificOutput")) | .hookSpecificOutput as $h
+        | if ($h | type) != "object" then "hookSpecificOutput is not an object"
+          else
+            ( select($h.hookEventName != $ev)
+              | "hookSpecificOutput.hookEventName \($h.hookEventName) != firing event \($ev)" ),
+            ( (($h | keys) - (hso_keys[$ev] // ["hookEventName"]))[]
+              | "unrecognized key for \($ev): hookSpecificOutput.\(.)" ),
+            ( select($h | has("permissionDecision"))
+              | if (["allow","deny","ask","defer"] | index($h.permissionDecision)) == null
+                then "permissionDecision must be allow|deny|ask|defer, got: \($h.permissionDecision)"
+                elif $h.permissionDecision == "allow"
+                then "policy: permissionDecision allow skips the user permission prompt"
+                else empty end ),
+            ( select($h | has("additionalContext"))
+              | if ($h.additionalContext | type) != "string" then "additionalContext is not a string"
+                elif $ev == "Stop" then "policy: Stop additionalContext makes the model take another turn"
+                else empty end )
+          end )
+    end' 2>/dev/null || echo "stdout is not valid JSON: ${_json:0:80}"
+}
+
+# check_host_schema <label> — fail if the last hook output (_OUT, event
+# _HOOK_EVENT) is not something Claude Code reads. Silent when it is, so it can
+# ride along on every run_hook without inflating the pass count.
+check_host_schema() {
+  local _label="$1" _v
+  [ -n "${_OUT:-}" ] && [ -n "${_HOOK_EVENT:-}" ] || return 0
+  _v=$(host_schema_violations "${_HOOK_EVENT}" "${_OUT}")
+  [ -z "${_v}" ] || fail "schema/${_label}" "$(printf '%s' "${_v}" | tr '\n' ';')"
+}
+
 # ── Hook runner ───────────────────────────────────────────────────────────────
 # run_hook <hook.sh> <fixture_path> [KEY=VAL ...]
 # Sets globals _OUT (stdout) and _RC (exit code).
@@ -30,6 +111,7 @@ section() { printf '\n── %s ────────────────
 run_hook() {
   local _hook="${HOOKS_DIR}/$1" _input="$2"; shift 2
   local _run_tmp; _run_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  _HOOK_EVENT=$(hook_event_for "$(basename "${_hook}")")
   _RC=0
   # IX_LEDGER_MODE=off: skip async ledger writes (not relevant to hook output)
   # IX_INGEST_INJECT=off: silence ingest injection
@@ -46,11 +128,13 @@ run_hook() {
     "$@" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${_hook}" < "${_input}" 2>/dev/null) || _RC=$?
+  check_host_schema "$(basename "${_hook}") < $(basename "${_input}")${*:+ $*}"
 }
 
 run_hook_with_debug_log() {
   local _hook="${HOOKS_DIR}/$1" _input="$2"; shift 2
   local _run_tmp; _run_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  _HOOK_EVENT=$(hook_event_for "$(basename "${_hook}")")
   _IX_DEBUG_LOG="${_run_tmp}/ix-hooks.log"
   _RC=0
   _OUT=$(env \
@@ -65,6 +149,7 @@ run_hook_with_debug_log() {
     "$@" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${_hook}" < "${_input}" 2>/dev/null) || _RC=$?
+  check_host_schema "$(basename "${_hook}") < $(basename "${_input}")${*:+ $*}"
 }
 
 # ── Assert helpers ────────────────────────────────────────────────────────────
@@ -81,8 +166,10 @@ assert_empty() {
   pass "${_name}"
 }
 
-# Assert exit 0, valid JSON with additionalContext containing a given prefix.
-# Also enforces the 10 000-char injection cap.
+# Assert exit 0, valid JSON whose hookSpecificOutput.additionalContext (the
+# only place Claude Code reads hook context from) contains a given prefix, with
+# hookEventName = _HOOK_EVENT and no permission decision. Also enforces the
+# 10 000-char injection cap.
 assert_additional_context() {
   local _name="$1" _prefix="${2:-[ix}"
   if [ "${_RC}" -ne 0 ]; then
@@ -94,10 +181,24 @@ assert_additional_context() {
   if ! echo "${_OUT}" | jq -e . >/dev/null 2>&1; then
     fail "${_name}" "invalid JSON: ${_OUT:0:100}"; return
   fi
-  local _ctx
-  _ctx=$(echo "${_OUT}" | jq -r '.additionalContext // empty' 2>/dev/null || true)
+  local _ctx _ev _v
+  if echo "${_OUT}" | jq -e 'has("additionalContext")' >/dev/null 2>&1; then
+    fail "${_name}" "top-level additionalContext (ignored by Claude Code) — output: ${_OUT:0:100}"; return
+  fi
+  _ctx=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
   if [ -z "${_ctx}" ]; then
-    fail "${_name}" "missing additionalContext — output: ${_OUT:0:100}"; return
+    fail "${_name}" "missing hookSpecificOutput.additionalContext — output: ${_OUT:0:100}"; return
+  fi
+  _ev=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.hookEventName // empty' 2>/dev/null || true)
+  if [ "${_ev}" != "${_HOOK_EVENT:-}" ]; then
+    fail "${_name}" "hookEventName '${_ev}', expected '${_HOOK_EVENT:-<unset>}'"; return
+  fi
+  if echo "${_OUT}" | jq -e '.hookSpecificOutput | has("permissionDecision")' >/dev/null 2>&1; then
+    fail "${_name}" "context-only output carries a permissionDecision — output: ${_OUT:0:140}"; return
+  fi
+  _v=$(host_schema_violations "${_HOOK_EVENT:-}" "${_OUT}")
+  if [ -n "${_v}" ]; then
+    fail "${_name}" "schema: ${_v}"; return
   fi
   if [[ "${_ctx}" != *"${_prefix}"* ]]; then
     fail "${_name}" "additionalContext missing '${_prefix}' — got: ${_ctx:0:100}"; return
@@ -127,8 +228,10 @@ assert_block_decision() {
   pass "${_name}"
 }
 
-# Assert exit 0, valid JSON with hookSpecificOutput.additionalContext
-# and permissionDecision=allow.
+# Assert exit 0, valid JSON with hookSpecificOutput.additionalContext and NO
+# permissionDecision. structured mode used to send "allow", which made Claude
+# Code skip the user's permission prompt for the tool call (every Bash command
+# containing grep, every Edit/Write the hook warned about).
 assert_structured() {
   local _name="$1"
   if [ "${_RC}" -ne 0 ]; then
@@ -146,8 +249,8 @@ assert_structured() {
   if [ -z "${_ctx}" ]; then
     fail "${_name}" "missing hookSpecificOutput.additionalContext"; return
   fi
-  if [ "${_decision}" != "allow" ]; then
-    fail "${_name}" "expected permissionDecision=allow, got: ${_decision}"; return
+  if [ -n "${_decision}" ]; then
+    fail "${_name}" "expected no permissionDecision, got: ${_decision}"; return
   fi
   pass "${_name}"
 }
@@ -212,20 +315,24 @@ assert_log_not_contains() {
 
 run_ix_hook_decide() {
   local _mode="$1" _content="$2"; shift 2
+  _HOOK_EVENT="PreToolUse"
   _RC=0
   _OUT=$(env "$@" bash -lc '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_hook_decide "$1" "$2"
   ' _ "${_mode}" "${_content}" 2>/dev/null) || _RC=$?
+  check_host_schema "ix_hook_decide ${_mode}${*:+ $*}"
 }
 
 run_ix_hook_fallback() {
   local _mode="$1" _content="$2" _augment="$3"; shift 3
+  _HOOK_EVENT="PreToolUse"
   _RC=0
   _OUT=$(env "$@" bash -lc '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_hook_fallback "$1" "$2" "$3"
   ' _ "${_mode}" "${_content}" "${_augment}" 2>/dev/null) || _RC=$?
+  check_host_schema "ix_hook_fallback ${_mode}${*:+ $*}"
 }
 
 run_ix_query_intent() {
@@ -328,10 +435,10 @@ if [ "${_RC}" -ne 0 ]; then
   fail "briefing/default model-authored annotation instruction" "expected exit 0, got ${_RC}"
 elif [ -z "${_OUT}" ]; then
   fail "briefing/default model-authored annotation instruction" "expected JSON output, got nothing"
-elif ! echo "${_OUT}" | jq -e '.additionalContext' >/dev/null 2>&1; then
-  fail "briefing/default model-authored annotation instruction" "missing additionalContext — output: ${_OUT:0:120}"
+elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "UserPromptSubmit" and (.hookSpecificOutput.additionalContext | type == "string")' >/dev/null 2>&1; then
+  fail "briefing/default model-authored annotation instruction" "missing hookSpecificOutput.additionalContext for UserPromptSubmit — output: ${_OUT:0:120}"
 else
-  _ctx=$(echo "${_OUT}" | jq -r '.additionalContext // empty' 2>/dev/null || true)
+  _ctx=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
   if [[ "${_ctx}" != *"[ix] Session briefing:"* ]]; then
     fail "briefing/default model-authored annotation instruction" "missing session briefing in additionalContext"
   elif [[ "${_ctx}" != *'must end your response with exactly this final structure and nothing after it:'* ]]; then
@@ -351,6 +458,7 @@ assert_log_not_contains "briefing/pro probe does not use --help" "CMD ix briefin
 assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format json"
 
 _briefing_repeat_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_HOOK_EVENT="UserPromptSubmit"
 _RC=0
 _OUT=$(env \
   TMPDIR="${_briefing_repeat_tmp}" \
@@ -417,7 +525,7 @@ if [ "${_RC}" -ne 0 ]; then
   fail "lib/ix_hook_decide structured block" "expected exit 0, got ${_RC}"
 elif [ -z "${_OUT}" ]; then
   fail "lib/ix_hook_decide structured block" "expected JSON output, got nothing"
-elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse" and .hookSpecificOutput.permissionDecision == "block" and .hookSpecificOutput.reason == "test reason"' >/dev/null 2>&1; then
+elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse" and .hookSpecificOutput.permissionDecision == "deny" and .hookSpecificOutput.permissionDecisionReason == "test reason"' >/dev/null 2>&1; then
   fail "lib/ix_hook_decide structured block" "unexpected output: ${_OUT:0:140}"
 else
   pass "lib/ix_hook_decide structured block"
@@ -623,7 +731,7 @@ if [ "${_RC}" -ne 0 ]; then
   fail "intercept/structured block output mode" "expected exit 0, got ${_RC}"
 elif [ -z "${_OUT}" ]; then
   fail "intercept/structured block output mode" "expected JSON output, got nothing"
-elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse" and .hookSpecificOutput.permissionDecision == "block" and (.hookSpecificOutput.reason | contains("Next: ix read AuthService"))' >/dev/null 2>&1; then
+elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse" and .hookSpecificOutput.permissionDecision == "deny" and (.hookSpecificOutput.permissionDecisionReason | contains("Next: ix read AuthService"))' >/dev/null 2>&1; then
   fail "intercept/structured block output mode" "unexpected output: ${_OUT:0:180}"
 else
   pass "intercept/structured block output mode"
@@ -873,8 +981,33 @@ else
     IX_ERROR_MODE="off" \
     PATH="${TESTS_DIR}:${PATH}" \
     bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+  _HOOK_EVENT="Stop"
+  check_host_schema "ix-annotate.sh default channel"
   assert_system_message "annotate/default emits visible ix summary" "Ix surfaced a graph-backed match for AuthService"
-  assert_additional_context "annotate/default also injects ix summary context" "Ix surfaced a graph-backed match for AuthService"
+  # A Stop hook's model channel (hookSpecificOutput.additionalContext) makes
+  # Claude take another turn, and a top-level additionalContext is ignored.
+  # Neither belongs on an attribution note.
+  if echo "${_OUT}" | jq -e 'has("additionalContext") or (.hookSpecificOutput? | has("additionalContext")?)' >/dev/null 2>&1; then
+    fail "annotate/default sends no model context from Stop" "output: ${_OUT:0:140}"
+  else
+    pass "annotate/default sends no model context from Stop"
+  fi
+
+  for _ch in additionalContext both; do
+    _RC=0
+    _OUT=$(env \
+      HOME="${_annotate_home}" \
+      TMPDIR="${_annotate_tmp}" \
+      IX_ANNOTATE_MODE="brief" \
+      IX_ANNOTATE_CHANNEL="${_ch}" \
+      IX_LEDGER_MODE="on" \
+      IX_ERROR_MODE="off" \
+      PATH="${TESTS_DIR}:${PATH}" \
+      bash "${HOOKS_DIR}/ix-annotate.sh" < "${_STOP_FIXTURE}" 2>/dev/null) || _RC=$?
+    check_host_schema "ix-annotate.sh channel=${_ch}"
+    assert_system_message "annotate/channel=${_ch} falls back to systemMessage" "Ix surfaced a graph-backed match for AuthService"
+    assert_no_hook_specific_output "annotate/channel=${_ch} sends no Stop additionalContext"
+  done
 
   _RC=0
   _OUT=$(env \
@@ -1482,6 +1615,101 @@ if [ -n "${_am_state}" ] && [ "$(ls "${_am_state}"/briefing-* 2>/dev/null | wc -
   pass "state/briefing cache per root, health + pro in the per-user dir"
 else
   fail "state/briefing cache per root, health + pro in the per-user dir" "$(ls -R "${_s}" | head -20)"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Host protocol — every hook's stdout is something Claude Code reads
+#
+# run_hook already schema-checks each output it captures (silently). This
+# section makes the contract explicit: the validator rejects every shape the
+# plugin used to print, and every hook path that prints anything, in both
+# IX_HOOK_OUTPUT_STYLE values, prints a shape Claude Code 2.1.287 accepts.
+# ═════════════════════════════════════════════════════════════════════════════
+section "host protocol"
+
+# expect_schema_violation <name> <event> <json> <needle>
+expect_schema_violation() {
+  local _v
+  _v=$(host_schema_violations "$2" "$3")
+  if [[ "${_v}" == *"$4"* ]]; then pass "$1"; else fail "$1" "expected '$4', got: ${_v:-<no violation>}"; fi
+}
+expect_schema_violation "schema/rejects top-level additionalContext (old augment shape)" \
+  PreToolUse '{"additionalContext":"[ix] x"}' "unrecognized top-level key: additionalContext"
+expect_schema_violation "schema/rejects top-level additionalContext on UserPromptSubmit (old briefing)" \
+  UserPromptSubmit '{"additionalContext":"[ix] x"}' "unrecognized top-level key: additionalContext"
+expect_schema_violation "schema/rejects permissionDecision block (old structured block)" \
+  PreToolUse '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"block","reason":"r"}}' \
+  "permissionDecision must be allow|deny|ask|defer, got: block"
+expect_schema_violation "schema/rejects hookSpecificOutput.reason (old structured block)" \
+  PreToolUse '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","reason":"r"}}' \
+  "hookSpecificOutput.reason"
+expect_schema_violation "schema/rejects permissionDecision allow (old structured augment)" \
+  PreToolUse '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","additionalContext":"c"}}' \
+  "policy: permissionDecision allow"
+expect_schema_violation "schema/rejects a hookEventName that is not the firing event" \
+  UserPromptSubmit '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"c"}}' \
+  "!= firing event UserPromptSubmit"
+expect_schema_violation "schema/rejects Stop additionalContext (forces a model turn)" \
+  Stop '{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"c"}}' "policy: Stop additionalContext"
+expect_schema_violation "schema/rejects non-JSON stdout" PreToolUse 'not json' "not valid JSON"
+for _ok in \
+  'PreToolUse|{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"c"}}' \
+  'PreToolUse|{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"r"}}' \
+  'PreToolUse|{"decision":"block","reason":"r"}' \
+  'UserPromptSubmit|{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"c"}}' \
+  'Stop|{"systemMessage":"m"}'; do
+  _v=$(host_schema_violations "${_ok%%|*}" "${_ok#*|}")
+  if [ -z "${_v}" ]; then pass "schema/accepts ${_ok}"; else fail "schema/accepts ${_ok}" "${_v}"; fi
+done
+
+# assert_host_output <name> — non-empty stdout that Claude Code accepts for
+# _HOOK_EVENT, and (unless 'any' is passed) carries model-visible content.
+assert_host_output() {
+  local _name="$1" _v
+  if [ "${_RC}" -ne 0 ] || [ -z "${_OUT}" ]; then
+    fail "${_name}" "expected output, rc=${_RC} out=${_OUT:0:80}"; return
+  fi
+  _v=$(host_schema_violations "${_HOOK_EVENT}" "${_OUT}")
+  if [ -n "${_v}" ]; then fail "${_name}" "${_v}"; return; fi
+  if ! echo "${_OUT}" | jq -e '(.hookSpecificOutput.additionalContext // .hookSpecificOutput.permissionDecisionReason // .reason // "") | length > 0' >/dev/null 2>&1; then
+    fail "${_name}" "nothing reaches the model — output: ${_OUT:0:120}"; return
+  fi
+  pass "${_name}"
+}
+
+for _style in legacy structured; do
+  run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" IX_HOOK_OUTPUT_STYLE="${_style}"
+  assert_host_output "host/${_style}/UserPromptSubmit ix-briefing.sh"
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE="${_style}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+  assert_host_output "host/${_style}/PreToolUse ix-intercept.sh Grep block"
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE="${_style}" IX_BLOCK_ON_HIGH_CONFIDENCE=0
+  assert_host_output "host/${_style}/PreToolUse ix-intercept.sh Grep augment"
+  run_hook ix-intercept.sh "${FX_IN}/glob_path.json" IX_HOOK_OUTPUT_STYLE="${_style}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+  assert_host_output "host/${_style}/PreToolUse ix-intercept.sh Glob block"
+  run_hook ix-intercept.sh "${FX_IN}/glob_path.json" IX_HOOK_OUTPUT_STYLE="${_style}" IX_BLOCK_ON_HIGH_CONFIDENCE=0
+  assert_host_output "host/${_style}/PreToolUse ix-intercept.sh Glob augment"
+  run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_HOOK_OUTPUT_STYLE="${_style}"
+  assert_host_output "host/${_style}/PreToolUse ix-bash.sh"
+  run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_HOOK_OUTPUT_STYLE="${_style}"
+  assert_host_output "host/${_style}/PreToolUse ix-pre-edit.sh"
+  run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_HOOK_OUTPUT_STYLE="${_style}"
+  assert_host_output "host/${_style}/PreToolUse ix-read.sh"
+done
+
+# A Glob denial is all the model gets in place of the Glob result, so it must
+# carry every entity ix returned, not the 5-name sample. The fixture has 7.
+run_hook ix-intercept.sh "${FX_IN}/glob_path.json" IX_HOOK_OUTPUT_STYLE=structured IX_BLOCK_ON_HIGH_CONFIDENCE=1
+_reason=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty' 2>/dev/null || true)
+_missing=""
+for _n in AuthService login logout validateToken AuthConfig authMiddleware TokenPayload; do
+  [[ "${_reason}" == *"${_n}"* ]] || _missing="${_missing} ${_n}"
+done
+if [ -z "${_reason}" ]; then
+  fail "host/Glob deny reason lists every entity" "no deny reason — output: ${_OUT:0:140}"
+elif [ -n "${_missing}" ]; then
+  fail "host/Glob deny reason lists every entity" "missing:${_missing} — reason: ${_reason:0:200}"
+else
+  pass "host/Glob deny reason lists every entity"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

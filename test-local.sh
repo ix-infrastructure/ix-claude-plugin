@@ -135,25 +135,25 @@ if [ "$IX_OK" = "1" ]; then
 
   READ_OUT=$(echo "{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$REPO/hooks/ix-read.sh\"}}" \
     | bash "$CACHE/hooks/ix-read.sh" 2>/dev/null || echo "")
-  echo "$READ_OUT" | jq -e '.additionalContext' >/dev/null 2>&1 \
+  echo "$READ_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-read.sh → additionalContext injected" \
     || info "ix-read.sh → no output (run 'ix map' first)"
 
   GREP_OUT=$(echo '{"tool_name":"Grep","tool_input":{"pattern":"ix inventory"}}' \
     | bash "$CACHE/hooks/ix-intercept.sh" 2>/dev/null || echo "")
-  echo "$GREP_OUT" | jq -e '.additionalContext' >/dev/null 2>&1 \
+  echo "$GREP_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-intercept.sh → additionalContext injected" \
     || info "ix-intercept.sh → no output"
 
   BASH_OUT=$(echo '{"tool_name":"Bash","tool_input":{"command":"rg \"def \" --type py"}}' \
     | bash "$CACHE/hooks/ix-bash.sh" 2>/dev/null || echo "")
-  echo "$BASH_OUT" | jq -e '.additionalContext' >/dev/null 2>&1 \
+  echo "$BASH_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-bash.sh → additionalContext injected" \
     || info "ix-bash.sh → no output"
 
   EDIT_OUT=$(echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$REPO/skills/ix-understand/SKILL.md\",\"old_string\":\"x\",\"new_string\":\"y\"}}" \
     | bash "$CACHE/hooks/ix-pre-edit.sh" 2>/dev/null || echo "")
-  echo "$EDIT_OUT" | jq -e '.additionalContext' >/dev/null 2>&1 \
+  echo "$EDIT_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-pre-edit.sh → additionalContext injected" \
     || info "ix-pre-edit.sh → no output"
 else
