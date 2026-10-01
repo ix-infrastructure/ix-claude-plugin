@@ -179,7 +179,7 @@ if [ "$FAILURES" -eq 0 ]; then
   echo "    /ix-docs <target> --full --style hybrid"
   echo "                                   ← deeper docs with selective reference"
   echo ""
-  echo "  To confirm hooks are firing: stat /tmp/ix-healthy"
+  echo "  To confirm hooks are firing: ls -l ${TMPDIR:-/tmp}/ix-plugin-cache-$(id -u)/healthy"
 else
   echo "  ✗ $FAILURES check(s) failed — see [FAIL] lines above."
 fi
