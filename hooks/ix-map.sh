@@ -3,8 +3,19 @@
 
 # ix-map.sh — Stop hook (async)
 #
-# Fires after Claude finishes each response. Runs ix map asynchronously to
-# keep the architectural graph current so the next session starts fresh.
+# Fires after Claude finishes each response. Asks for the guarded automatic
+# map of the project root (ix_request_auto_map in ix-lib.sh) so the next
+# session starts from a current graph. Everything that decides whether a map
+# actually runs lives there:
+#   - root = git top-level of the payload's `cwd` (not a git repo / $HOME → skip)
+#   - only an already-mapped project (`ix status` graphCompleted) is refreshed
+#   - per-root debounce (IX_MAP_DEBOUNCE_SECONDS, default 300) in a per-user dir
+#   - `ix map <root> --silent`, IX_AUTO_MAP=1, run detached from the root
+#
+# Before, this ran a bare `ix map` from whatever directory the hook started in,
+# behind a machine-wide /tmp debounce and lock, inside the hook's 60s timeout —
+# while the CLI's own map deadline is far longer, so a slow map was killed
+# midway after the debounce had already been written.
 #
 # System-message annotation (when enabled) is handled by ix-annotate.sh, which
 # runs synchronously before this hook so the message appears before the session
@@ -12,76 +23,17 @@
 
 set -euo pipefail
 
+INPUT=$(cat)
+
 # ── Shared library ────────────────────────────────────────────────────────────
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${_HOOK_DIR}/lib/index.sh" 2>/dev/null || true
+source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-map"
 
-# Mark this map as automatic (background refresh). The CLI skips an automatic
-# map when the active backend is remote — a shared remote graph should be fed
-# deliberately, not on every change from every client. Manual `ix map` is
-# unaffected. Users who want remote auto-refresh set IX_AUTO_MAP_CLOUD=1.
-export IX_AUTO_MAP=1
-
-# ── Debounce — skip if a map ran recently ────────────────────────────────────
-IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
-IX_MAP_DEBOUNCE_FILE="${TMPDIR:-/tmp}/ix-map-last"
-_now=$(date +%s)
-_skip_map=0
-if [ -f "$IX_MAP_DEBOUNCE_FILE" ]; then
-  _last=$(cat "$IX_MAP_DEBOUNCE_FILE" 2>/dev/null || echo 0)
-  _elapsed_since=$(( _now - _last ))
-  if (( _elapsed_since < IX_MAP_DEBOUNCE_SECONDS )); then
-    _skip_map=1
-    ix_log "SKIP debounce (last map ${_elapsed_since}s ago, TTL=${IX_MAP_DEBOUNCE_SECONDS}s)"
-  fi
-fi
-
-# ── Lock — skip if another map is already running ────────────────────────────
-# Prefer flock on POSIX. Fall back to atomic mkdir on systems without flock
-# (e.g. Git Bash on Windows) so concurrent Stop hooks can't stampede ix map.
-IX_MAP_LOCK_PATH="${IX_MAP_LOCK_PATH:-${TMPDIR:-/tmp}/ix-map.lock}"
-IX_MAP_LOCK_DIR="${IX_MAP_LOCK_DIR:-${TMPDIR:-/tmp}/ix-map.lockdir}"
-if [ "$_skip_map" -eq 0 ]; then
-  if command -v flock >/dev/null 2>&1; then
-    exec 9>"$IX_MAP_LOCK_PATH"
-    if ! flock -n 9; then
-      _skip_map=1
-      ix_log "SKIP lock held (another ix map running)"
-      ix_ledger_append "Stop" "map_skipped_lock" "0" "" "1" "" "0"
-    fi
-  else
-    # Clear stale lock from a dead process so a crashed hook doesn't wedge us.
-    if [ -d "$IX_MAP_LOCK_DIR" ] && [ -f "$IX_MAP_LOCK_DIR/pid" ]; then
-      _holder=$(cat "$IX_MAP_LOCK_DIR/pid" 2>/dev/null || echo "")
-      if [ -n "$_holder" ] && ! kill -0 "$_holder" 2>/dev/null; then
-        rm -rf "$IX_MAP_LOCK_DIR" 2>/dev/null || true
-      fi
-    fi
-    if mkdir "$IX_MAP_LOCK_DIR" 2>/dev/null; then
-      echo $$ > "$IX_MAP_LOCK_DIR/pid"
-      trap 'rm -rf "$IX_MAP_LOCK_DIR" 2>/dev/null || true' EXIT
-    else
-      _skip_map=1
-      ix_log "SKIP mkdir-lock held (another ix map running)"
-      ix_ledger_append "Stop" "map_skipped_lock" "0" "" "1" "" "0"
-    fi
-  fi
-fi
-
-# ── Run map (Claude Code's async runner handles timeout) ─────────────────────
-if [ "$_skip_map" -eq 0 ]; then
-  echo "$_now" > "$IX_MAP_DEBOUNCE_FILE"
-  ix_log "RUN ix map (full graph refresh)"
-  ix_log_command ix map
-  ix map >/dev/null 2>&1 && ix_log "DONE ix map complete" || {
-    ix_capture_async "ix" "ix-map" "full map failed" "$?" "ix map" ""
-    ix_log "FAILED ix map exit=$?"
-  }
-else
-  ix_log "ENTRY skip_map=$_skip_map"
-fi
+_project_dir=$(ix_payload_project_dir "$INPUT" || true)
+ix_log "ENTRY project_dir=${_project_dir:-<none>}"
+ix_request_auto_map "$_project_dir"
 
 exit 0

@@ -36,8 +36,10 @@ source "${_IX_LIB_DIR}/../ix-ledger.sh" 2>/dev/null || true
 # ── Plugin env defaults (override via shell env) ──────────────────────────────
 IX_ANNOTATE_MODE="${IX_ANNOTATE_MODE:-brief}"                   # off | brief | debug | verbose
 # systemMessage goes to the person; additionalContext goes into the model's
-# context window. `both` sent the attribution summary to both, so the model paid
-# for a line about work it had just watched happen. The person keeps seeing it.
+# context window. `both` (and `modelSuffix`) add a ~0.9 KB per-prompt
+# instruction from ix-briefing.sh asking the model to write an attribution
+# section about work the person had just watched happen. The Stop summary is
+# systemMessage whatever the channel, so the person keeps seeing it.
 IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-systemMessage}"    # systemMessage | modelSuffix | both
 IX_INGEST_INJECT="${IX_INGEST_INJECT:-off}"                    # off | on | debug-only
 IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
