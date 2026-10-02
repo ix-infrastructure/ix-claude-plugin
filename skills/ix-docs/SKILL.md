@@ -172,10 +172,13 @@ Always start with:
 ix stats --format llm
 ix subsystems --format llm
 ix subsystems --list --format llm
-ix briefing --format json 2>&1
 ```
 
-**Pro check:** If `ix briefing` returns JSON with a `revision` field, Pro is available. Extract `activeGoals`, `recentDecisions`, and `recentChanges` for use in **[Pro]** steps. If it errors, skip all Pro-labeled steps — the skill works fully without them.
+**Pro check:** do not run `ix briefing` — you have already been told. The
+plugin's UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL
+whenever Pro is reachable. Seen one this session? Pro is available; take
+`activeGoals`, `recentDecisions` and `recentChanges` from it. Not seen one? Skip
+all Pro-labeled steps — the skill works fully without them.
 
 If `TARGET` is not obviously the whole repo:
 ```bash
@@ -340,7 +343,7 @@ Note: `ix smells` does not support `--path` scoping — results are always repo-
 
 **[Pro]** If Pro is available and `recentDecisions` is non-empty, include relevant architectural decisions in the risk and complexity section:
 ```bash
-ix decisions --format json
+ix decisions --format text
 ```
 
 Prioritize:

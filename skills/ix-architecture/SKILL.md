@@ -30,10 +30,11 @@ If the result is empty or returns an error, stop: *"No graph data yet — run `i
 
 ## Pro check
 
-```bash
-ix briefing --format json 2>&1
-```
-If it returns JSON with a `revision` field, Pro is available. Note `recentDecisions` for use below. Skip all **[Pro]** steps if it errors.
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable. Seen one this session? Pro is available; note
+`recentDecisions` from it. Not seen one? Skip every **[Pro]** step. Asking costs
+a whole turn to learn something already in your context.
 
 ---
 
@@ -117,7 +118,7 @@ When taking the inline path, produce:
 
 If Pro is available, after the report (inline or delegated) is complete:
 ```bash
-ix decisions --format json
+ix decisions --format text
 ```
 Append a **Recorded Decisions** section cross-referencing relevant design decisions against the findings — especially decisions that affect god-modules, high-coupling regions, or identified hotspots.
 

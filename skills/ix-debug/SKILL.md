@@ -17,11 +17,11 @@ Strip `--save` and any following path token from `$ARGUMENTS` before resolving t
 
 ## Pro check (optional)
 
-Run once at the start:
-```bash
-ix briefing --format json 2>&1
-```
-If it returns JSON with a `revision` field, Pro is available. Extract `openBugs` and `recentDecisions` for use in Pro steps below. If it errors, skip all **[Pro]** labeled steps.
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable. Seen one this session? Pro is available; read `openBugs` and `recentChanges` from it.
+Not seen one? Skip every **[Pro]** step. Asking costs a whole turn to learn
+something already in your context.
 
 **[Pro]** If `openBugs` is non-empty, scan for a known bug matching this symptom before proceeding. If found, surface it immediately — an existing bug record may already have candidates or a fix.
 **[Pro]** If `recentDecisions` is non-empty, scan for recent decisions or context that might explain the symptom or constrain the likely fix. Surface any relevant match before continuing.

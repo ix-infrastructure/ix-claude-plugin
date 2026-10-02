@@ -73,17 +73,17 @@ Do not continue running queries once you have sufficient evidence. If the findin
 
 ### Step 6 — Active plans cross-reference **[Pro]**
 
-```bash
-ix briefing --format json 2>&1
-```
+Do not run `ix briefing` — you have already been told. The plugin's
+UserPromptSubmit hook injects an `[ix] Session briefing` once per TTL whenever
+Pro is reachable.
 
-If it returns JSON with a `revision` field (Pro is available):
-- Extract `activePlans` and `recentDecisions`
+If you have seen one this session (Pro is available):
+- Take `activePlans` and `recentDecisions` from it
 - For each active plan: check if it touches any region flagged in Steps 1–3
 - For each recent decision: check if it affects a high-risk component from Step 3
 - Include findings as a "Cross-reference: Active Plans vs Audit Findings" section in the report
 
-If `ix briefing` errors or returns no plans/decisions, skip this step entirely.
+If you have seen no briefing, or it listed no plans or decisions, skip this step entirely.
 
 ## Output format
 

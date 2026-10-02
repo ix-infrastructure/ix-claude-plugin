@@ -477,7 +477,7 @@ run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 # when only the Pro *stub* is registered, so probing with it reported Pro as
 # available on every OSS install.
 assert_log_not_contains "briefing/pro probe does not use --help" "CMD ix briefing --help"
-assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format json"
+assert_log_contains "briefing/debug logs briefing command" "CMD ix briefing --format text"
 
 _briefing_repeat_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _HOOK_EVENT="UserPromptSubmit"
@@ -554,6 +554,99 @@ if [ "${_pro_stamp}" = "MISSING" ] || [ "${_pro_stamp}" != "${_pro_health}" ]; t
     "expected the probe stamp to match the health stamp, got '${_pro_stamp}' vs '${_pro_health}'"
 else
   pass "pro-probe/the answer is cached for this health window"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-briefing.sh — what the briefing costs
+# ═════════════════════════════════════════════════════════════════════════════
+section "briefing cost"
+
+# text, not json. Nothing downstream parses the briefing — it is injected
+# verbatim — and the JSON envelope is pure cost. Measured on a real graph:
+# json 4,350 bytes vs text 1,283.
+_BFR_TMP=$(mktemp -d -p "${TEST_TMPDIR}")
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_DEBUG="1" IX_DEBUG_LOG="${_BFR_TMP}/debug.log"
+if ! grep -q "ix briefing --format text" "${_BFR_TMP}/debug.log" 2>/dev/null; then
+  fail "briefing/asks for text" "expected --format text in the logged command"
+elif grep -q "ix briefing --format json" "${_BFR_TMP}/debug.log" 2>/dev/null; then
+  fail "briefing/asks for text" "still asking for json"
+else
+  pass "briefing/asks for text"
+fi
+
+# A briefing whose every section is empty is a header and a revision number. It
+# tells the model only that Pro is installed, and costs a paragraph to say so.
+_BFR_EMPTY=$(mktemp -d -p "${TEST_TMPDIR}")
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
+  TMPDIR="${_BFR_EMPTY}"
+if [ -n "${_OUT}" ]; then
+  fail "briefing/says nothing when there is nothing to say" \
+    "expected no injection, got: ${_OUT:0:120}"
+else
+  pass "briefing/says nothing when there is nothing to say"
+fi
+
+# ...but it must still hold the TTL. Caching only non-empty content means a
+# project with nothing to report re-runs `ix briefing` on every single prompt —
+# the same shape as the Pro-probe bug, in a second place.
+_BFR_TTL=$(mktemp -d -p "${TEST_TMPDIR}")
+# The cache is per user and per project root: ${TMPDIR}/ix-plugin-cache-<uid>/
+# briefing-<hash of root>. A payload cwd outside any git repo is its own root.
+_BFR_TTL_PROJ="${_BFR_TTL}/project"
+mkdir -p "${_BFR_TTL_PROJ}"
+_BFR_TTL_INPUT="${_BFR_TTL}/prompt.json"
+jq -cn --arg cwd "${_BFR_TTL_PROJ}" \
+  '{"session_id":"test-session-001","prompt":"explain the auth flow","cwd":$cwd}' > "${_BFR_TTL_INPUT}"
+_BFR_TTL_CACHE="${_BFR_TTL}/ix-plugin-cache-$(id -u)/briefing-$(
+  TMPDIR="${_BFR_TTL}/hash" bash -c 'mkdir -p "$TMPDIR"; source "$1/lib/index.sh"; hash_string "$2"' \
+    _ "${HOOKS_DIR}" "${_BFR_TTL_PROJ}" 2>/dev/null)"
+_RC=0
+_OUT=$(env TMPDIR="${_BFR_TTL}" \
+  IX_HEALTH_CACHE="${_BFR_TTL}/ix-healthy" \
+  IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-briefing.sh" < "${_BFR_TTL_INPUT}" 2>/dev/null) || _RC=$?
+_HOOK_EVENT="UserPromptSubmit"
+check_host_schema "ix-briefing.sh empty briefing"
+if [ "${_RC}" -ne 0 ]; then
+  fail "briefing/an empty briefing still holds the TTL" "expected exit 0, got ${_RC}"
+elif [ ! -f "${_BFR_TTL_CACHE}" ]; then
+  fail "briefing/an empty briefing still holds the TTL" \
+    "expected ${_BFR_TTL_CACHE#"${_BFR_TTL}"/} to be stamped so the next prompt does not re-run ix briefing — have: $(cd "${_BFR_TTL}" && find . -name 'briefing-*' | tr '\n' ' ')"
+elif ! head -1 "${_BFR_TTL_CACHE}" | grep -qE '^[0-9]+$'; then
+  fail "briefing/an empty briefing still holds the TTL" "cache does not start with a timestamp"
+else
+  pass "briefing/an empty briefing still holds the TTL"
+fi
+
+# A project with a long plan list should not run away with the prompt.
+_BFR_BIG=$(mktemp -d -p "${TEST_TMPDIR}")
+_BIG_FIXTURE="${_BFR_BIG}/big.txt"
+{
+  echo "Ix Briefing"
+  echo "  Revision: 1"
+  echo ""
+  echo "Plans (400)"
+  for _i in $(seq 1 400); do echo "  > plan ${_i} with a reasonably long descriptive title"; done
+} > "${_BIG_FIXTURE}"
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_BRIEFING_MAX_CHARS="512" \
+  IX_MOCK_BRIEFING_FILE="${_BIG_FIXTURE}"
+_ctx=$(echo "${_OUT}" | jq -r 'select(.hookSpecificOutput.hookEventName == "UserPromptSubmit") | .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
+if [ -z "${_ctx}" ]; then
+  fail "briefing/caps a runaway briefing" "expected hookSpecificOutput.additionalContext for UserPromptSubmit, got: ${_OUT:0:120}"
+elif [ "${#_ctx}" -gt 700 ]; then
+  fail "briefing/caps a runaway briefing" "expected ~512 chars plus a marker, got ${#_ctx}"
+elif [[ "${_ctx}" != *"truncated"* ]]; then
+  fail "briefing/caps a runaway briefing" "truncated without saying so"
+else
+  pass "briefing/caps a runaway briefing"
 fi
 
 # Only where the platform can enforce a bound. On a stock macOS there is no

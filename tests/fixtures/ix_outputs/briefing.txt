@@ -1,0 +1,9 @@
+Ix Briefing
+  Revision: 2742
+  Last ingest: 2026-09-19T05:16:26.352Z
+
+Goals (1)
+  ◆ Mock goal
+
+Recent Decisions (1)
+  ◇ Mock decision

@@ -100,12 +100,13 @@ hook-internal parsing — that is intentional.)
 
 ### Pro-Only Commands
 
-These require Ix Pro. Skills check by running `ix briefing --format json` and looking
-for a `revision` field. If absent, all Pro steps are skipped gracefully.
+These require Ix Pro. Skills don't run a probe: they look for an `[ix] Session briefing`
+already in context, which the UserPromptSubmit hook injects once per TTL when Pro is
+reachable. If none has been seen this session, all Pro steps are skipped gracefully.
 
 | Command | What it does |
 |---------|-------------|
-| `ix briefing --format json` | Returns session context: activeGoals, activePlans, openBugs, recentDecisions, recentChanges. Injected by ix-briefing.sh hook once per 10 minutes. |
+| `ix briefing --format text` | Returns session context: active goals, plans, open bugs, recent decisions and changes. Injected by ix-briefing.sh once per 10 minutes. Text, not json: @ix/pro declares only `text\|json`, and text is about 70% smaller. |
 | `ix decisions` | Returns recorded architectural decisions. Used by ix-investigate, ix-debug, ix-architecture to surface relevant past decisions. |
 | `ix bug list --format text` | Lists bug records (Ix Pro only). Used by ix-debug and ix-impact to check if any known bugs touch the blast radius. |
 | `ix bug create "<title>" --severity <level> --affects <symbol>` | Creates a new bug record. ix-debug suggests this at the end of an investigation for new bugs. |
@@ -159,9 +160,10 @@ otherwise.
 
 - 10-minute TTL cache, one per project root, in the per-user state dir
   (`IX_STATE_DIR`). Skips if briefing was injected within the last 10 minutes.
-- Calls `ix briefing --format json`
-- Injects: `[ix] Session briefing: <json>` containing activeGoals, activePlans,
-  openBugs, recentDecisions
+- Calls `ix briefing --format text`
+- Injects `[ix] Session briefing:` followed by the text briefing (active goals, plans,
+  open bugs, recent decisions), capped at `IX_BRIEFING_MAX_CHARS` (default 2048).
+  A briefing with every section empty is suppressed, and still holds the TTL.
 - Gives Claude standing context about what's being worked on before any reasoning
   begins
 
@@ -737,7 +739,7 @@ architectural context without drowning it in low-value detail.
 ix stats --format json
 ix subsystems --format json
 ix subsystems --list --format json
-ix briefing --format json 2>&1   (Pro check + activeGoals/recentDecisions)
+[Pro] read the injected [ix] Session briefing (active goals, recent decisions)
 ```
 If TARGET is not the whole repo: `ix locate "$TARGET" --format json`
 Resolve target type: repo, top-level system, subsystem, module/file, class/symbol.
@@ -947,8 +949,8 @@ ix smells --format json    (filter by path prefix after retrieval)
 Hard limit: one region. Identify the worst and analyze that; do not audit every subsystem.
 
 **Step 6 — Active plans cross-reference [Pro]:**
-`ix briefing --format json`
-Cross-reference activePlans against flagged regions, recentDecisions against high-risk
+Read the injected `[ix] Session briefing`.
+Cross-reference active plans against flagged regions, recentDecisions against high-risk
 components. Output as "Cross-reference: Active Plans vs Audit Findings" table.
 
 **Output:** System health overview table (cohesion, ext. coupling, smells, flag per
@@ -965,7 +967,7 @@ Hotspots (central + poorly bounded components), What's Healthy, Priority Order
 refactors. Never recommends a change without knowing its blast radius.
 
 **Step 0 — Pro check:**
-`ix briefing --format json` — extract activePlans and activeGoals.
+Read the injected `[ix] Session briefing` — active plans and goals.
 If an existing plan already covers this refactor, align to it rather than duplicating.
 
 **Step 1 — Identify all targets:**
@@ -1060,11 +1062,7 @@ answered — token efficiency over completeness.
 
 ## Pro Integration (Optional)
 
-Skills check for Ix Pro at the start of each invocation:
-```bash
-ix briefing --format json 2>&1
-```
-If the response contains a `revision` field, Pro is available. All Pro steps are
+Skills check for Ix Pro without spending a turn: Pro is available if an `[ix] Session briefing` already in context (the UserPromptSubmit hook injects one per TTL when Pro is reachable). All Pro steps are
 optional — skills degrade gracefully when Pro is absent. ix-briefing.sh is a
 complete no-op if Pro is not installed.
 

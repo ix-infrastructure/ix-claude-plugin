@@ -361,8 +361,10 @@ ix_check_pro() {
     # damage to one prompt.
     echo "0" > "$IX_PRO_CACHE"
     echo "$_health_ts" > "${IX_PRO_CACHE}.ts"
-    ix_log_command ix briefing --format json
-    if ix_run_bounded "${IX_PRO_PROBE_TIMEOUT:-5}" ix briefing --format json >/dev/null 2>&1; then
+    # text, not json: the output is discarded, so the only thing that matters is
+    # the exit code, and text is less for the CLI to render.
+    ix_log_command ix briefing --format text
+    if ix_run_bounded "${IX_PRO_PROBE_TIMEOUT:-5}" ix briefing --format text >/dev/null 2>&1; then
       echo "1" > "$IX_PRO_CACHE"
     else
       ix_log "PRO probe failed or timed out — treating as OSS until $(( ${IX_PRO_PROBE_TIMEOUT:-5} ))s after the next health refresh"
