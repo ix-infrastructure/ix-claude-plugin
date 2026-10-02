@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.4
+
+Makes the hooks speak Claude Code's hook protocol, so the context they compute actually reaches the model. Checked against Claude Code 2.1.287 (the hook-output zod schemas in its binary) and https://code.claude.com/docs/en/hooks.
+
+- **Hook context was being thrown away.** Every "augment" path — the session briefing and attribution instruction (`ix-briefing.sh`), the shell-grep hint (`ix-bash.sh`), the edit blast-radius warning (`ix-pre-edit.sh`), the Grep/Glob hint (`ix-intercept.sh` via `ix_hook_decide`) — printed a top-level `{"additionalContext": ...}`. Claude Code reads hook context only from `hookSpecificOutput.additionalContext` with a `hookEventName` matching the firing event, and logs `Hook JSON output had unrecognized keys (ignored): additionalContext` for the old shape. All of them now go through `ix_emit_context <event> <text>`, which emits `{"hookSpecificOutput":{"hookEventName":"<event>","additionalContext":"..."}}` (`UserPromptSubmit` for the briefing, `PreToolUse` for the rest). Visible consequence: with the default `IX_ANNOTATE_CHANNEL=both`, the model now really receives the per-prompt `Ix` attribution instruction, and will add the `Ix` section it asks for.
+- **The Stop hook no longer sends model context.** `ix-annotate.sh` also printed a top-level `additionalContext`, which was ignored. Its only valid model channel on Stop, `hookSpecificOutput.additionalContext`, makes Claude take another turn to act on it — not something an attribution note should cost. The summary now always goes out as `systemMessage`; `IX_ANNOTATE_CHANNEL=additionalContext|both` fall back to it.
+- **`IX_HOOK_OUTPUT_STYLE=structured` no longer bypasses permission prompts.** It sent `permissionDecision: "allow"` with every context injection, which made Claude Code skip the user's permission prompt for the tool call: every Bash command containing `grep`, every Edit/Write the pre-edit hook warned about. Context-only output now carries no decision, in either style.
+- **Structured block uses the real enum.** It sent `permissionDecision: "block"` with a `reason` key; the enum is `allow|deny|ask|defer` and the reason key is `permissionDecisionReason`, so the output failed validation. It is now `deny` + `permissionDecisionReason`. The default (`legacy`) block keeps the top-level `decision: "block"` + `reason`, which Claude Code still honours for PreToolUse as a deny.
+- **A Glob denial carries the whole answer.** When the Glob hook denies the call, its reason is all the model receives in place of the Glob result, but it listed only the first 5 of up to 20 entities. It now lists every entity ix returned.
+- Tests assert the real shape, and every hook output captured by the suite is checked against the 2.1.287 schema (top-level keys, `hookEventName` = firing event, per-event `hookSpecificOutput` keys, the `permissionDecision` enum), plus two plugin rules: never `allow`, never Stop `additionalContext`. A smoke run of `claude -p --plugin-dir` against the fake `ix` shows the "unrecognized keys" warning gone and the model quoting a marker that only the briefing contains.
+
+Hook tests: 142 passing (108 before); the same suite fails 84 cases against 3.1.3's hooks.
+
 ## 3.1.3
 
 Stops the hooks running `ix map` calls that cannot work, and gates the automatic map that remains.

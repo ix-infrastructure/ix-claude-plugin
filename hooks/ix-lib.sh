@@ -22,7 +22,8 @@
 #   ix_log_injection        — log exact injected hook content with escaped newlines
 #   parse_json              — strip ix header noise, extract first JSON value
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
-#   ix_hook_decide          — emit block/augment/allow output in legacy or structured format
+#   ix_emit_context         — emit hookSpecificOutput.additionalContext for an event
+#   ix_hook_decide          — emit PreToolUse block/augment/allow output (legacy or structured block)
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
@@ -503,11 +504,34 @@ ix_confidence_gate() {
   fi
 }
 
-# ── Hook output decision helper ──────────────────────────────────────────────
+# ── Hook output: model context ───────────────────────────────────────────────
+# Usage: ix_emit_context <hookEventName> <text>
+# Claude Code reads hook-supplied model context only from
+# hookSpecificOutput.additionalContext, and only when hookSpecificOutput's
+# hookEventName names the event that fired the hook (it rejects a mismatch). A
+# top-level `additionalContext` is dropped with "Hook JSON output had
+# unrecognized keys (ignored): additionalContext" (Claude Code 2.1.287 hook
+# output schema; https://code.claude.com/docs/en/hooks#add-context-for-claude).
+# No permissionDecision: this only adds context. A PreToolUse "allow" would also
+# skip the user's permission prompt for the tool call it rides on.
+ix_emit_context() {
+  jq -cn --arg e "$1" --arg c "$2" \
+    '{"hookSpecificOutput": {"hookEventName": $e, "additionalContext": $c}}'
+}
+
+# ── Hook output decision helper (PreToolUse) ─────────────────────────────────
 # Usage: ix_hook_decide <mode> <content>
 #   mode    — "block" | "augment" | "allow"
 #   content — reason string (block) or context string (augment); ignored for allow
-# Emits the correct Claude Code JSON and exits.
+# Emits the Claude Code PreToolUse JSON and exits.
+#   block   — the tool call is denied and `content` is what the model receives
+#             in place of the tool result. Structured: permissionDecision
+#             "deny" + permissionDecisionReason (the enum is allow|deny|ask|
+#             defer; "block" fails validation). Legacy: top-level
+#             decision "block" + reason, which Claude Code still honours for
+#             PreToolUse as a deny with that reason.
+#   augment — the tool runs; `content` reaches the model next to its result.
+#   allow   — no output; the tool runs under the user's normal permissions.
 ix_hook_decide() {
   local _mode="$1"
   local _content="${2:-}"
@@ -517,8 +541,8 @@ ix_hook_decide() {
         jq -cn --arg r "$_content" '{
           "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "block",
-            "reason": $r
+            "permissionDecision": "deny",
+            "permissionDecisionReason": $r
           }
         }'
       else
@@ -526,17 +550,7 @@ ix_hook_decide() {
       fi
       ;;
     augment)
-      if [ "${IX_HOOK_OUTPUT_STYLE:-legacy}" = "structured" ]; then
-        jq -cn --arg c "$_content" '{
-          "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "additionalContext": $c
-          }
-        }'
-      else
-        jq -cn --arg c "$_content" '{"additionalContext": $c}'
-      fi
+      ix_emit_context "PreToolUse" "$_content"
       ;;
     allow|*)
       exit 0

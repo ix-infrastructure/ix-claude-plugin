@@ -8,7 +8,7 @@
 # is enabled, also injects a per-turn instruction telling Claude to end its
 # response with a terse "Ix:" line inferred from the [ix] context it saw.
 #
-# Exit 0 + JSON stdout → injects additionalContext into the prompt
+# Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, added to the prompt
 # Exit 0 + no stdout  → no-op
 
 set -euo pipefail
@@ -97,5 +97,5 @@ fi
 ix_log "DECISION injecting ${#_context} chars additionalContext"
 ix_log_injection "additionalContext" "$_context"
 
-jq -n --arg ctx "$_context" '{"additionalContext": $ctx}'
+ix_emit_context "UserPromptSubmit" "$_context"
 exit 0

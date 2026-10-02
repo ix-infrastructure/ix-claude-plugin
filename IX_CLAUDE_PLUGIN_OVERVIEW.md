@@ -125,16 +125,24 @@ All hooks:
 - Bail silently if `ix` is not in PATH or the server is unreachable
 - Produce compact one-line summaries (never raw JSON dumps)
 - Use TTL caches to avoid redundant queries
-- Output `{"additionalContext": "..."}` to inject context, or nothing to no-op
+- Output `{"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext": "..."}}`
+  to inject context, or nothing to no-op. Claude Code ignores a top-level
+  `additionalContext` ("unrecognized keys"), and rejects a `hookEventName` that is
+  not the firing event. Context-only output never carries a `permissionDecision`:
+  an `allow` would skip the user's permission prompt.
+- A Grep/Glob block denies the tool call (`permissionDecision: "deny"` with
+  `IX_HOOK_OUTPUT_STYLE=structured`, the still-honoured top-level
+  `decision: "block"` otherwise); the reason is the whole answer the model gets
+  in place of the tool result
 
 Hook registry (`hooks/hooks.json`):
 ```
 UserPromptSubmit            → ix-briefing.sh      (10s timeout)
-UserPromptSubmit            → ix-annotate.sh      (5s timeout)
 PreToolUse(Grep|Glob)       → ix-intercept.sh     (10s timeout)
 PreToolUse(Bash)            → ix-bash.sh          (10s timeout)
 PreToolUse(Edit|Write|MultiEdit) → ix-pre-edit.sh (10s timeout)
 PostToolUse(Edit|Write|MultiEdit|NotebookEdit) → ix-ingest.sh (async, 30s)
+Stop                        → ix-annotate.sh      (5s timeout)
 Stop                        → ix-map.sh           (async, 60s)
 ```
 
@@ -262,10 +270,10 @@ Code's hook runner.
 
 ---
 
-### ix-annotate.sh — UserPromptSubmit
+### ix-annotate.sh — Stop
 
-Fires at the start of a user prompt and summarizes the previous turn's ix
-contribution from the ledger.
+Fires when Claude finishes a turn and summarizes that turn's ix contribution
+from the ledger.
 
 **No-op cases:** `IX_ANNOTATE_MODE=off`, `IX_ANNOTATE_CHANNEL=modelSuffix`,
 unsupported channels, missing/empty ledger records, or turns where no hook
@@ -273,8 +281,11 @@ produced non-zero injected context.
 
 - Reads the current session's last-turn ledger records
 - Emits one terse attribution sentence keyed to the highest-priority hook type
-- Uses `systemMessage`, `additionalContext`, or both depending on
-  `IX_ANNOTATE_CHANNEL`
+- Always uses `systemMessage` (shown to the user). A Stop hook's only model
+  channel, `hookSpecificOutput.additionalContext`, makes Claude take another
+  turn, so `IX_ANNOTATE_CHANNEL=additionalContext|both` fall back to
+  `systemMessage`; the model-facing attribution is the `modelSuffix`
+  instruction ix-briefing.sh injects
 
 ---
 

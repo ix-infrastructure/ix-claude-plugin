@@ -10,8 +10,11 @@
 # Output is a single line, not raw JSON dumps — designed to be acted on,
 # not skipped over.
 #
-# Exit 0 + JSON stdout → injects additionalContext, native tool still runs
-# Exit 0 + no stdout  → no-op, native tool runs normally
+# Exit 0 + JSON stdout, augment → hookSpecificOutput.additionalContext, native
+#                                 tool still runs
+# Exit 0 + JSON stdout, block   → the native tool call is denied; the reason is
+#                                 the whole answer the model receives in its place
+# Exit 0 + no stdout            → no-op, native tool runs normally
 
 set -euo pipefail
 
@@ -188,7 +191,14 @@ if [ "$TOOL" = "Grep" ]; then
 else
   if [ "${GLOB_HOOK_MODE:-augment}" = "block" ]; then
     _first_sample=$(printf '%s' "$SAMPLE" | cut -d',' -f1 | tr -d ' ')
-    REASON="[ix inventory] '${PATTERN}' in ${PATH_ARG}: ${TOTAL} entities — ${SAMPLE}"
+    # The reason is all the model gets in place of the Glob result, so it lists
+    # every entity ix returned (block only fires at <= 20), not the 5-name
+    # sample the augment line uses -- a sample would just send the model back to
+    # Glob for the rest.
+    _all_names=$(echo "$INV_JSON" | jq -r '[.results[]?.name | select(. != null)] | join(", ")' 2>/dev/null || echo "")
+    _shown=$(echo "$INV_JSON" | jq -r '[.results[]?] | length' 2>/dev/null || echo 0)
+    REASON="[ix inventory] '${PATTERN}' in ${PATH_ARG}: ${TOTAL} entities — ${_all_names:-$SAMPLE}"
+    [ "${_shown:-0}" -lt "${TOTAL:-0}" ] && REASON="${REASON} (${_shown} of ${TOTAL} listed)"
     [ -n "$_first_sample" ] && REASON="${REASON} | Next: ix overview ${_first_sample}"
     ix_ledger_append "PreToolUse" "Glob" "${#REASON}" "inventory" "1" "" "$_elapsed_ms" \
       "surveyed ${PATTERN} with inventory and highlighted likely targets."
