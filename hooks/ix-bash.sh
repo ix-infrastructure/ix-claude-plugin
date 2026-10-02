@@ -55,6 +55,17 @@ if [ "${IX_SKIP_SECRET_PATTERNS:-1}" = "1" ] && ix_looks_like_secret "$PATTERN";
 fi
 ix_log "PATTERN extracted='$PATTERN'"
 
+# The same gate ix-intercept.sh applies to Grep, and for the same reason: a
+# pattern with regex syntax in it, a phrase, or a log prefix names nothing in
+# the graph, so `ix text` + `ix locate` can only come back empty. This hook was
+# missing it, so every shell grep paid for two ix calls before the shell command
+# it was supposed to be saving even started.
+ix_query_intent "$PATTERN"
+if [ "$QUERY_INTENT" = "literal" ]; then
+  ix_log "SKIP literal intent — shell grep will run"
+  exit 0
+fi
+
 # ── Run ix text + ix locate in parallel ───────────────────────────────────────
 ix_log "RUN ix text+locate pattern='$PATTERN'"
 _t0=$(ix_now_ms)

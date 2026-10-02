@@ -1,6 +1,6 @@
 # ix-claude-plugin — Complete Technical Reference
 
-> Version 2.3.0 | Self-contained reference for AI assistants
+> Version 3.2.0 | Self-contained reference for AI assistants
 
 ---
 
@@ -130,7 +130,8 @@ All hooks:
   `additionalContext` ("unrecognized keys"), and rejects a `hookEventName` that is
   not the firing event. Context-only output never carries a `permissionDecision`:
   an `allow` would skip the user's permission prompt.
-- A Grep/Glob block denies the tool call (`permissionDecision: "deny"` with
+- A Grep/Glob block (only with `IX_BLOCK_ON_HIGH_CONFIDENCE=1`; the default
+  augments) denies the tool call (`permissionDecision: "deny"` with
   `IX_HOOK_OUTPUT_STYLE=structured`, the still-honoured top-level
   `decision: "block"` otherwise); the reason is the whole answer the model gets
   in place of the tool result
@@ -286,6 +287,10 @@ produced non-zero injected context.
   turn, so `IX_ANNOTATE_CHANNEL=additionalContext|both` fall back to
   `systemMessage`; the model-facing attribution is the `modelSuffix`
   instruction ix-briefing.sh injects
+- `IX_ANNOTATE_CHANNEL` defaults to `systemMessage`, i.e. to the person only:
+  the summary describes a turn the model just took, so attribution addressed
+  to the model is context it pays for and cannot use. `both` or `modelSuffix`
+  asks for the briefing's model-facing instruction back
 
 ---
 
@@ -302,7 +307,10 @@ ix-errors.sh and ix-lib.sh in one call, creating a single import hub for the gra
 
 **ix_check_pro()**
 - TTL tied to health check timestamp
-- Caches pro availability in `/tmp/ix-pro`
+- Caches pro availability in the per-user state dir (`$IX_STATE_DIR/pro`)
+- Writes the cache *before* probing and bounds the probe
+  (`IX_PRO_PROBE_TIMEOUT`, default 5s), so a probe killed with the hook still
+  leaves an answer for the next prompt instead of stalling every one of them
 - Exits the calling hook with 0 if Pro is not available
 - Must be called after ix_health_check
 
@@ -1142,7 +1150,7 @@ agents/
   ix-architecture-auditor.md  Structural audit (spawned by ix-architecture)
 
 .claude-plugin/
-  plugin.json             Plugin manifest: name=ix-memory, version=3.1.1
+  plugin.json             Plugin manifest: name=ix-memory, version=3.2.0
   marketplace.json        Marketplace listing for /plugin marketplace add
 
 CLAUDE.md                 Behavioral rules injected into Claude's context window
