@@ -46,6 +46,7 @@ hooks/
   ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh
 tests/
   test_hooks.sh              integration harness
+  test_real_ix.sh            hooks against a real, released ix (CI job real-ix)
   mock-ix.sh                 ix CLI stub
   fixtures/                  hook inputs and expected outputs
 .claude-plugin/
@@ -106,6 +107,7 @@ Hook work:
 Testing:
 - Run `bash tests/test_hooks.sh` after hook changes.
 - The harness uses `tests/mock-ix.sh` and fixture JSON to validate behavior without a live ix server.
+- `bash tests/test_real_ix.sh` runs the hooks against the real `ix` first on PATH, with no backend; CI pins the release. It fails when a hook uses a flag that CLI lacks.
 - Prefer targeted fixture additions over broad test rewrites when adjusting one hook path.
 
 Manual checks:

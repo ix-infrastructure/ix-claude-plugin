@@ -162,6 +162,48 @@ jobs:
       - name: Run hook tests
         run: bash tests/test_hooks.sh
 
+  # The hooks against a released ix CLI instead of tests/mock-ix.sh, with no
+  # backend (IX_ENDPOINT is a closed port). Fails when a hook passes a flag the
+  # pinned CLI does not have, or mishandles what the real CLI prints. Not in
+  # `ci-success` yet: it reports on the PR without gating merges.
+  real-ix:
+    name: Hooks against real ix
+    runs-on: ubuntu-latest
+    env:
+      IX_VERSION: "0.12.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      # `ix text` shells out to ripgrep.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: Install ix ${{ env.IX_VERSION }}
+        run: |
+          set -euo pipefail
+          tarball="ix-${IX_VERSION}-linux-amd64.tar.gz"
+          base="https://github.com/ix-infrastructure/Ix/releases/download/v${IX_VERSION}"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "${base}/${tarball}"
+          curl -fsSLO "${base}/${tarball}.sha256"
+          sha256sum -c "${tarball}.sha256"
+          mkdir -p ix
+          tar -xzf "$tarball" -C ix --strip-components=1
+          echo "$RUNNER_TEMP/ix" >> "$GITHUB_PATH"
+
+      - name: Run hooks against real ix
+        env:
+          IX_EXPECT_VERSION: ${{ env.IX_VERSION }}
+        run: |
+          ix --version
+          bash tests/test_real_ix.sh
+
   ci-success:
     name: CI Passed
     if: always()
