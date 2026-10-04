@@ -194,6 +194,18 @@ EOF
     fi
   fi
 
+  # 2b. Grep with path and type: the hooks then add `ix text --path` and
+  #     `--language`, flags the bare Grep above never passes, so step 8 only
+  #     checks them against this CLI if a case sends them.
+  if run_hook "[${_name}] Grep intercept with path/type" ix-intercept.sh PreToolUse \
+       "$(payload PreToolUse Grep '{"pattern":"computeTotal","path":"src","type":"js"}')"; then
+    if printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("1 text hits")' >/dev/null 2>&1; then
+      pass "[${_name}] Grep intercept with path/type: real ix text summarised"
+    else
+      fail "[${_name}] Grep intercept with path/type: real ix text summarised" "stdout: ${OUT:0:200}"
+    fi
+  fi
+
   # 3. PreToolUse Bash grep: same pipeline from a shell command.
   if run_hook "[${_name}] Bash intercept" ix-bash.sh PreToolUse \
        "$(payload PreToolUse Bash '{"command":"rg computeTotal src"}')"; then
@@ -261,8 +273,13 @@ EOF
   for _sub in text locate inventory impact briefing status; do
     case " ${_seen} " in *" ${_sub} "*) ;; *) _missing="${_missing} ${_sub}" ;; esac
   done
+  # Optional flags the hooks add only for some inputs must have run too.
+  local _flag
+  for _flag in "text .*--path" "text .*--language" "inventory .*--path"; do
+    grep -qE "\] CMD ix ${_flag}( |$)" "$IX_DEBUG_LOG" || _missing="${_missing} ix ${_flag/ .\*/ }"
+  done
   if [ -n "$_missing" ]; then
-    fail "[${_name}] hooks exercised every ix subcommand they use" "never ran:${_missing}"
+    fail "[${_name}] hooks exercised every ix subcommand and optional flag they use" "never ran:${_missing}"
   elif [ "$_bad" -eq 0 ]; then
     pass "[${_name}] all ${_n} distinct ix command lines the hooks ran parse under ix ${IX_VERSION}"
   fi
