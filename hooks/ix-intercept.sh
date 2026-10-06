@@ -3,9 +3,10 @@
 
 # ix-intercept.sh — PreToolUse hook for Grep and Glob
 #
-# Fires before Grep/Glob executes. Runs ix text + ix locate/inventory in
-# parallel and injects a CONCISE one-line summary as additionalContext so
-# Claude has a graph-aware answer before the native tool runs.
+# Fires before Grep/Glob executes. For a Grep that names one definition, injects
+# where it is defined and who calls it (ix locate + ix callers) as
+# additionalContext -- what the Grep's own results cannot say -- and otherwise
+# stays silent. For a Glob, runs ix inventory.
 #
 # Output is a single line, not raw JSON dumps — designed to be acted on,
 # not skipped over.
@@ -87,12 +88,14 @@ if [ "$TOOL" = "Grep" ]; then
     fi
   fi
 
-  CONTEXT="[ix text + ix locate] '${PATTERN}'"
-  [ -n "$LOC_PART" ]  && CONTEXT="${CONTEXT} — ${LOC_PART}"
-  [ -n "$TEXT_PART" ] && CONTEXT="${CONTEXT} | ${TEXT_PART}"
-  CONTEXT="${CONTEXT} | Use ix explain/trace/impact for deeper analysis, ix read <symbol> for source"
-  [ -n "$CONF_WARN" ] && CONTEXT="${CONF_WARN} | ${CONTEXT}"
-  if [ "$HOOK_MODE" != "block" ] && { [ -n "$LOC_PART" ] || [ -n "$TEXT_PART" ]; }; then
+  # Augment with what the Grep about to run cannot say -- the definition and
+  # its callers -- or with nothing. Its own results list every text hit, so a
+  # summary of `ix text`'s hits, or candidate names with a pointer to more ix
+  # commands, only repeated them (see ix_definition_context).
+  DEF_PART=""
+  [ -n "$_LOC_RAW" ] && ix_definition_context "$_LOC_RAW"
+  CONTEXT="$DEF_PART"
+  if [ "$HOOK_MODE" != "block" ] && [ -n "$DEF_PART" ]; then
     HOOK_MODE="augment"
   fi
   ix_log "DECISION mode=$HOOK_MODE"
@@ -180,10 +183,10 @@ if [ "$TOOL" = "Grep" ]; then
     echo "ix locate '${PATTERN}' → ${_loc_name} at ${_loc_path} [BLOCKED]" >&2
     ix_hook_fallback "block" "$REASON" "$CONTEXT"
   elif [ "$HOOK_MODE" = "augment" ]; then
-    ix_ledger_append "PreToolUse" "Grep" "${#CONTEXT}" "text,locate" "${_confidence:-1}" "" "$_elapsed_ms" \
-      "surfaced graph-backed matches for ${PATTERN} and suggested deeper ix follow-ups."
+    ix_ledger_append "PreToolUse" "Grep" "${#CONTEXT}" "locate,callers" "${_confidence:-1}" "" "$_elapsed_ms" \
+      "answered Grep for ${PATTERN} with its definition and callers."
     ix_log_injection "additionalContext" "$CONTEXT"
-    echo "ix text + ix locate: '${PATTERN}' → ${LOC_PART:-no exact match} | ${TEXT_PART:-no text hits}" >&2
+    echo "ix locate + callers: '${PATTERN}' → ${LOC_PART:-no exact match}" >&2
     ix_hook_fallback "augment" "$CONTEXT"
   else
     exit 0

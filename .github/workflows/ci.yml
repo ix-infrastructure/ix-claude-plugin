@@ -106,7 +106,7 @@ jobs:
         run: |
           echo "── Hooks ──"
           FAIL=0
-          for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh; do
+          for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-dependents.sh ix-map.sh; do
             if [ -f "hooks/$hook" ] && [ -x "hooks/$hook" ]; then
               echo "  [ok] $hook"
             elif [ -f "hooks/$hook" ]; then

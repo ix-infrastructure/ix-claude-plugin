@@ -45,7 +45,37 @@ if [ -f "$IX_BRIEFING_CACHE" ]; then
   fi
 fi
 
-if [ "$_briefing_fresh" -eq 1 ] && [ -z "$_annotation_instruction" ]; then
+# ── Starting points for the task: the session's first prompt ─────────────────
+# The session briefing needs Ix Pro and a project with goals, plans or
+# decisions on record; on any other project it is empty, and the first prompt
+# -- usually the task itself -- got nothing. `ix context --from-issue - --lean`
+# (Ix CLI 0.12.0+) reads that prompt as an issue and answers with the files Ix
+# trusts as starting points, or with one line saying it trusts none, which is
+# not injected. Once per session and project: the mark is claimed before ix
+# runs, so a slow or failed run still uses up the one try. The prompt goes to
+# ix on stdin and nowhere else. IX_ISSUE_START=off turns it off.
+_start_points=""
+if [ "${IX_ISSUE_START:-on}" != "off" ]; then
+  _session=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || echo "")
+  _prompt=$(echo "$INPUT" | jq -r '.prompt // empty' 2>/dev/null || echo "")
+  _start_mark="${IX_STATE_DIR}/start-$(hash_string "${_session}|${_briefing_root}")"
+  if [ -n "$_session" ] && [ ! -e "$_start_mark" ] \
+      && [ "${#_prompt}" -ge "${IX_ISSUE_START_MIN_CHARS:-40}" ]; then
+    : > "$_start_mark"
+    ix_health_check
+    IX_HOOK_NAME="ix-briefing"
+    ix_log_command ix context --from-issue - --lean --format text
+    _start_points=$(cd "$_briefing_root" && printf '%s' "$_prompt" \
+      | ix_run_bounded "${IX_ISSUE_START_TIMEOUT:-6}" ix context --from-issue - --lean --format text 2>/dev/null) \
+      || _start_points=""
+    case "$_start_points" in
+      "Ix found no confident starting point"*) ix_log "SKIP start points (Ix trusts none)"; _start_points="" ;;
+    esac
+    ix_log "START points=${#_start_points} chars"
+  fi
+fi
+
+if [ "$_briefing_fresh" -eq 1 ] && [ -z "$_annotation_instruction" ] && [ -z "$_start_points" ]; then
   exit 0
 fi
 
@@ -123,8 +153,18 @@ _elapsed_ms=0
 [ -n "$_t0" ] && _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 
 _context=""
+if [ -n "$_start_points" ]; then
+  _context="[ix] Starting points for this task, from Ix's graph (a starting point, not a restriction; verify anything you rely on):"$'\n'"${_start_points}"
+  ix_ledger_append "UserPromptSubmit" "StartPoints" "${#_context}" "context" "1" "" "0" \
+    "pointed at the files Ix trusts as starting points for the task."
+fi
 if [ -n "$BRIEFING" ]; then
-  _context="[ix] Session briefing:\n${BRIEFING}"
+  _briefing_block="[ix] Session briefing:\n${BRIEFING}"
+  if [ -n "$_context" ]; then
+    _context="${_context}"$'\n'"${_briefing_block}"
+  else
+    _context="${_briefing_block}"
+  fi
   ix_ledger_append "UserPromptSubmit" "Briefing" "${#_context}" "briefing" "1" "" "$_elapsed_ms" \
     "loaded project context up front from goals, plans, and recent decisions."
 fi

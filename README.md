@@ -65,11 +65,12 @@ Autonomous multi-step agents for complex tasks:
 
 | Trigger | Hook | Effect |
 |---------|------|--------|
-| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**; also instructs Claude to append a short final `Ix` section when hooks helped |
-| Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Front-runs with `ix text` + `ix locate`/`ix inventory` |
-| Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts pattern, front-runs with `ix text` + `ix locate` |
+| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**. On a session's first task-sized prompt, also the files Ix trusts as starting points for it (`ix context --from-issue - --lean`; `IX_ISSUE_START=off` to disable). Can also ask Claude to append a short final `Ix` section (`IX_ANNOTATE_CHANNEL`) |
+| Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Grep naming one definition: where it is defined and its callers at their call sites (`ix locate` + `ix callers`), else silent. Glob: `ix inventory` |
+| Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts the pattern; if it names one definition, adds where it is defined and its callers, else silent |
 | Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | Runs `ix impact` before the edit |
 | Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Requests the guarded root map (below); never maps the single file |
+| Claude edits, by tool or through `Bash` | `PostToolUse` → `ix-dependents.sh` | `ix hook claude-post-edit` (Ix CLI 0.12.1+): from the working tree's diff, the callers, importers and tests of each symbol the edit changed, once per session (`IX_EDIT_DEPENDENTS=off` to disable) |
 | Claude finishes responding | `Stop` → `ix-annotate.sh` | Emits a factual summary of how ix helped on that turn on non-`modelSuffix` channels |
 | Claude finishes responding | `Stop` → `ix-map.sh` (async) | Guarded `ix map <root> --silent`: git root of the session's cwd (not `$HOME`), already-mapped projects only, debounced per root, detached |
 

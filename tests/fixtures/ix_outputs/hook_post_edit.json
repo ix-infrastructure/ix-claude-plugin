@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Ix: you changed `login` (src/auth.ts:12-20).\ncallers (2):\n  src/auth-routes.ts:8 AuthService.login(req.body)\n  src/app.ts:14 const auth = new AuthService(config);\nThese may need updating to match your edit."}}

@@ -1,0 +1,3 @@
+Where to start (Ix resolved these from the issue's own words):
+  src/auth.ts  AuthService  the issue names it
+Then, by the issue's text: src/auth-routes.ts, src/app.ts

@@ -45,7 +45,7 @@ hook_event_for() {
   case "$1" in
     ix-briefing.sh) echo "UserPromptSubmit" ;;
     ix-intercept.sh|ix-bash.sh|ix-pre-edit.sh|ix-read.sh) echo "PreToolUse" ;;
-    ix-ingest.sh) echo "PostToolUse" ;;
+    ix-ingest.sh|ix-dependents.sh) echo "PostToolUse" ;;
     ix-annotate.sh|ix-map.sh) echo "Stop" ;;
     *) echo "" ;;
   esac
@@ -840,7 +840,8 @@ fi
 # way; IX_BLOCK_ON_HIGH_CONFIDENCE decides whether the native Grep is also
 # denied, and it is off by default (denying costs a whole turn to save a call).
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
-assert_additional_context "intercept/grep plain symbol augments by default" "[ix text + ix locate]"
+assert_additional_context "intercept/grep plain symbol augments by default" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
@@ -861,10 +862,11 @@ assert_block_decision "intercept/grep dotted symbol blocks" "Found: AuthService 
 run_hook ix-intercept.sh "${FX_IN}/grep_regex.json"
 assert_empty "intercept/grep regex literal"
 
-# Medium-confidence candidates → native Grep runs with additionalContext
+# Candidates but no one definition → nothing the Grep's own results lack:
+# silent, the native Grep answers.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
-assert_additional_context "intercept/medium confidence candidates augment" "[ix text + ix locate]"
+assert_empty "intercept/candidates without one definition stay silent"
 
 # ── Ix#539: `ix locate` exiting non-zero while still printing a body ──────────
 # An unresolved target is about to exit non-zero with its JSON payload intact.
@@ -874,7 +876,7 @@ assert_additional_context "intercept/medium confidence candidates augment" "[ix 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
   IX_MOCK_LOCATE_EXIT=1
-assert_additional_context "intercept/non-zero locate still augments" "[ix text + ix locate]"
+assert_empty "intercept/non-zero locate with candidates stays silent"
 
 run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
@@ -923,7 +925,33 @@ assert_empty "intercept/low confidence locate allows native Grep"
 
 # Escape hatch disables blocking even for exact high-confidence matches
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=0
-assert_additional_context "intercept/block escape hatch augments" "[ix text + ix locate]"
+assert_additional_context "intercept/block escape hatch augments" "is defined at src/auth.ts"
+
+# What the Grep cannot say: callers at the call site, nearest the definition
+# first, at most three named and the rest counted.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
+assert_additional_context "intercept/callers at their call sites" \
+  "src/app.ts:14 \`const auth = new AuthService(config);\`"
+assert_additional_context "intercept/callers beyond three are counted" "(+1 more)"
+if printf '%s' "${_OUT}" | grep -q "api/session.ts.*src/app.ts"; then
+  fail "intercept/callers in the definition's directory lead" "got: ${_OUT}"
+else
+  pass "intercept/callers in the definition's directory lead"
+fi
+if printf '%s' "${_OUT}" | grep -qE "Prefer|ix text|text hits"; then
+  fail "intercept/no grep hits repeated back, no ix nudge" "got: ${_OUT}"
+else
+  pass "intercept/no grep hits repeated back, no ix nudge"
+fi
+
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_CALLERS_FILE="${FX_IX}/callers_none.json"
+assert_additional_context "intercept/a definition nothing calls says so" "the graph has no callers for it"
+
+# ix callers failing leaves the definition, which is still news to a Grep.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_CALLERS_FILE=/dev/null IX_MOCK_CALLERS_EXIT=1
+assert_additional_context "intercept/callers failure keeps the definition" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts"
 
 # Structured output format for block mode
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE=structured IX_BLOCK_ON_HIGH_CONFIDENCE=1
@@ -1089,9 +1117,24 @@ assert_log_contains "pre-edit/logs a miss rather than a failure" "MISS ix impact
 # ═════════════════════════════════════════════════════════════════════════════
 section "ix-bash.sh"
 
-# bash grep command → text + locate → additionalContext
+# bash grep command → locate + callers → additionalContext
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}"
 assert_additional_context "bash/grep intercepted"
+assert_additional_context "bash/grep answered with definition and callers" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
+if printf '%s' "${_OUT}" | grep -qE "Prefer|text hits"; then
+  fail "bash/no grep hits repeated back, no ix nudge" "got: ${_OUT}"
+else
+  pass "bash/no grep hits repeated back, no ix nudge"
+fi
+
+# Candidates but no one definition → the shell grep answers alone.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
+assert_empty "bash/candidates without one definition stay silent"
+
+# A low-confidence resolution is not worth a line.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
+assert_empty "bash/low confidence stays silent"
 
 # An alternation is a grep expression, not a symbol: nothing in the graph is
 # named `a|b`, so the two ix calls could only come back empty. It must be
@@ -1135,6 +1178,118 @@ assert_empty "bash/ix failure degrades gracefully"
 # Structured output format
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_HOOK_OUTPUT_STYLE=structured
 assert_structured "bash/structured output mode"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-dependents.sh — what depends on the code an edit changed
+#
+# Fires on: PostToolUse(Edit|MultiEdit|Write|Bash)
+# Hands the hook input to `ix hook claude-post-edit` and passes on what it says.
+# ═════════════════════════════════════════════════════════════════════════════
+section "ix-dependents.sh"
+
+_DEP_BASH_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '{"session_id":"s-dep","hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"Bash","tool_input":{"command":"python3 - <<EOF\\n...\\nEOF"},"tool_response":{"stdout":""}}' \
+  > "${_DEP_BASH_FIXTURE}"
+_DEP_STDIN_LOG=$(mktemp -p "${TEST_TMPDIR}")
+
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_MOCK_HOOK_STDIN_LOG="${_DEP_STDIN_LOG}"
+assert_additional_context "dependents/an edit through Bash reports its callers" "Ix: you changed \`login\`"
+if grep -q '"tool_name":"Bash"' "${_DEP_STDIN_LOG}" && grep -q '"session_id":"s-dep"' "${_DEP_STDIN_LOG}"; then
+  pass "dependents/the hook input reaches ix hook unchanged"
+else
+  fail "dependents/the hook input reaches ix hook unchanged" "got: $(cat "${_DEP_STDIN_LOG}")"
+fi
+
+run_hook ix-dependents.sh "${FX_IN}/edit_high_risk.json"
+assert_additional_context "dependents/an Edit reports its callers" "These may need updating"
+
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_MOCK_HOOK_FILE=/dev/null
+assert_empty "dependents/nothing to report prints nothing"
+
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_MOCK_NO_HOOK=1
+assert_empty "dependents/an ix without \`ix hook\` prints nothing"
+
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_MOCK_FAIL=1
+assert_empty "dependents/ix failure degrades gracefully"
+
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_EDIT_DEPENDENTS=off
+assert_empty "dependents/IX_EDIT_DEPENDENTS=off"
+
+run_hook ix-dependents.sh "${_EMPTY_FIXTURE}"
+assert_empty "dependents/no-tool input"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix-briefing.sh — starting points for the task on a session's first prompt
+# ═════════════════════════════════════════════════════════════════════════════
+section "ix-briefing.sh starting points"
+
+_START_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '{"session_id":"s-start","prompt":"AuthService.login rejects valid tokens after the session refresh; fix it so refreshed sessions can log in"}' \
+  > "${_START_FIXTURE}"
+_START_STATE=$(mktemp -d -p "${TEST_TMPDIR}")
+_START_STDIN_LOG=$(mktemp -p "${TEST_TMPDIR}")
+
+# run_hook gives each run its own TMPDIR, and with it a fresh state dir; the
+# once-per-session cases share one instead.
+run_start_hook() {
+  _RC=0
+  _OUT=$(env TMPDIR="${_START_STATE}" IX_HEALTH_CACHE="${_START_STATE}/ix-healthy" \
+    IX_LEDGER_MODE="off" IX_ERROR_MODE="off" "$@" PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/ix-briefing.sh" < "${_START_FIXTURE}" 2>/dev/null) || _RC=$?
+  _HOOK_EVENT="UserPromptSubmit"
+  check_host_schema "ix-briefing.sh start points${*:+ $*}"
+}
+
+run_start_hook IX_MOCK_CONTEXT_STDIN_LOG="${_START_STDIN_LOG}" IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+assert_additional_context "start/first prompt gets Ix's starting points" "[ix] Starting points for this task"
+assert_additional_context "start/the lean bundle is passed on" "src/auth.ts  AuthService  the issue names it"
+if grep -q "AuthService.login rejects valid tokens" "${_START_STDIN_LOG}"; then
+  pass "start/the prompt reaches ix on stdin"
+else
+  fail "start/the prompt reaches ix on stdin" "got: $(cat "${_START_STDIN_LOG}")"
+fi
+
+run_start_hook IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+if printf '%s' "${_OUT}" | grep -q "Starting points"; then
+  fail "start/only the session's first prompt" "got: ${_OUT}"
+else
+  pass "start/only the session's first prompt"
+fi
+
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_MOCK_CONTEXT_FILE="${FX_IX}/context_lean_none.txt" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+if printf '%s' "${_OUT}" | grep -q "Starting points\|no confident starting point"; then
+  fail "start/no line when Ix trusts no starting point" "got: ${_OUT}"
+else
+  pass "start/no line when Ix trusts no starting point"
+fi
+
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ISSUE_START=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+if printf '%s' "${_OUT}" | grep -q "Starting points"; then
+  fail "start/IX_ISSUE_START=off" "got: ${_OUT}"
+else
+  pass "start/IX_ISSUE_START=off"
+fi
+
+# A short prompt ("hi", "continue") is not a task description.
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+if printf '%s' "${_OUT}" | grep -q "Starting points"; then
+  fail "start/a short prompt gets none" "got: ${_OUT}"
+else
+  pass "start/a short prompt gets none"
+fi
+
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_MOCK_FAIL=1
+if printf '%s' "${_OUT}" | grep -q "Starting points"; then
+  fail "start/ix failure degrades gracefully" "got: ${_OUT}"
+else
+  pass "start/ix failure degrades gracefully"
+fi
+
+# With a briefing too, both reach the model.
+run_hook ix-briefing.sh "${_START_FIXTURE}"
+assert_additional_context "start/starting points beside the session briefing" "[ix] Session briefing:"
+assert_additional_context "start/session briefing beside the starting points" "[ix] Starting points for this task"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-annotate.sh — Stop hook attribution
