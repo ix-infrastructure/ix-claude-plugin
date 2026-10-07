@@ -177,20 +177,32 @@ EOF
     fi
   fi
 
-  # 2. PreToolUse Grep: real `ix text` JSON is summarised; the failed `ix locate`
-  #    (error record or empty body) must not be read as a symbol or candidates.
+  # 1b. A task-sized first prompt asks `ix context --from-issue - --lean` for
+  #     starting points. With no graph to answer from, none may be injected.
+  if run_hook "[${_name}] briefing start points" ix-briefing.sh UserPromptSubmit \
+       "$(jq -cn --arg sid "${SESSION}-start" --arg cwd "$PROJECT" \
+          '{session_id: $sid, cwd: $cwd, hook_event_name: "UserPromptSubmit",
+            prompt: "computeTotal in src/math.js adds its arguments the wrong way round; fix it"}')"; then
+    if printf '%s' "$OUT" | grep -q 'Starting points'; then
+      fail "[${_name}] briefing start points: none without a graph" "stdout: ${OUT:0:200}"
+    elif ! grep -q '\] CMD ix context --from-issue - --lean' "$IX_DEBUG_LOG"; then
+      fail "[${_name}] briefing start points: ix context was asked" "no CMD line in the debug log"
+    else
+      pass "[${_name}] briefing start points: asked ix, injected nothing without a graph"
+    fi
+  fi
+
+  # 2. PreToolUse Grep: the hook answers only with a definition `ix locate`
+  #    resolved. Here locate fails (error record or empty body), which must not
+  #    be read as a definition: silence, and no block.
   if run_hook "[${_name}] Grep intercept" ix-intercept.sh PreToolUse \
        "$(payload PreToolUse Grep '{"pattern":"computeTotal"}')"; then
-    local _ctx
-    _ctx=$(printf '%s' "$OUT" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
-    if ! printf '%s' "$_ctx" | grep -q '1 text hits in math.js'; then
-      fail "[${_name}] Grep intercept: parses real ix text output" "context: '${_ctx:0:200}'"
-    elif printf '%s' "$_ctx" | grep -qE 'symbol:|candidates:'; then
-      fail "[${_name}] Grep intercept: locate error is not a match" "context: '${_ctx:0:200}'"
-    elif printf '%s' "$OUT" | jq -e '.decision? == "block"' >/dev/null 2>&1; then
+    if printf '%s' "$OUT" | jq -e '.decision? == "block"' >/dev/null 2>&1; then
       fail "[${_name}] Grep intercept: does not block" "stdout: ${OUT:0:200}"
+    elif [ -n "$OUT" ]; then
+      fail "[${_name}] Grep intercept: locate error is not a definition" "stdout: ${OUT:0:200}"
     else
-      pass "[${_name}] Grep intercept: real ix text summarised, locate error ignored, no block"
+      pass "[${_name}] Grep intercept: locate error is not a definition, silent, no block"
     fi
   fi
 
@@ -199,20 +211,20 @@ EOF
   #     checks them against this CLI if a case sends them.
   if run_hook "[${_name}] Grep intercept with path/type" ix-intercept.sh PreToolUse \
        "$(payload PreToolUse Grep '{"pattern":"computeTotal","path":"src","type":"js"}')"; then
-    if printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("1 text hits")' >/dev/null 2>&1; then
-      pass "[${_name}] Grep intercept with path/type: real ix text summarised"
+    if [ -z "$OUT" ]; then
+      pass "[${_name}] Grep intercept with path/type: silent without a definition"
     else
-      fail "[${_name}] Grep intercept with path/type: real ix text summarised" "stdout: ${OUT:0:200}"
+      fail "[${_name}] Grep intercept with path/type: silent without a definition" "stdout: ${OUT:0:200}"
     fi
   fi
 
-  # 3. PreToolUse Bash grep: same pipeline from a shell command.
+  # 3. PreToolUse Bash grep: same rule from a shell command.
   if run_hook "[${_name}] Bash intercept" ix-bash.sh PreToolUse \
        "$(payload PreToolUse Bash '{"command":"rg computeTotal src"}')"; then
-    if printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("1 text hits")' >/dev/null 2>&1; then
-      pass "[${_name}] Bash intercept: real ix text summarised"
+    if [ -z "$OUT" ]; then
+      pass "[${_name}] Bash intercept: silent without a definition"
     else
-      fail "[${_name}] Bash intercept: real ix text summarised" "stdout: ${OUT:0:200}"
+      fail "[${_name}] Bash intercept: silent without a definition" "stdout: ${OUT:0:200}"
     fi
   fi
 
@@ -243,14 +255,34 @@ EOF
     fi
   fi
 
+  # 6b. PostToolUse Bash: an edit made through a script is in the diff, and the
+  #     real `ix hook claude-post-edit` sees it. With no graph it has nothing
+  #     to say, and the hook must say nothing.
+  printf 'export function computeTotal(a, b) {\n  return b + a;\n}\n' > "${PROJECT}/src/math.js"
+  if run_hook "[${_name}] dependents" ix-dependents.sh PostToolUse \
+       "$(payload PostToolUse Bash '{"command":"sed -i s/a + b/b + a/ src/math.js"}')"; then
+    if [ -n "$OUT" ]; then
+      fail "[${_name}] dependents: nothing to report without a graph" "stdout: ${OUT:0:200}"
+    elif ! grep -q '\] CMD ix hook claude-post-edit' "$IX_DEBUG_LOG"; then
+      fail "[${_name}] dependents: ix hook was asked" "no CMD line in the debug log"
+    else
+      pass "[${_name}] dependents: asked ix hook on a real diff, silent without a graph"
+    fi
+  fi
+  git -C "$PROJECT" checkout -q -- src/math.js
+
   # 7. Stop: the async map hook and the attribution summary.
   run_hook "[${_name}] Stop map" ix-map.sh Stop "$(payload Stop "" null)" \
     && pass "[${_name}] Stop map: exit 0, no output problems"
+  # The summary reports the hooks that told Claude something this turn. With
+  # no graph none did -- the Grep and Bash intercepts answer only with a
+  # definition now -- so there is nothing to summarise, and a summary would be
+  # an invention.
   if run_hook "[${_name}] Stop annotate" ix-annotate.sh Stop "$(payload Stop "" null)"; then
-    if printf '%s' "$OUT" | jq -e '.systemMessage | type == "string"' >/dev/null 2>&1; then
-      pass "[${_name}] Stop annotate: systemMessage from this turn's ledger"
+    if printf '%s' "$OUT" | jq -e '.systemMessage? // empty | test("[a-z]")' >/dev/null 2>&1; then
+      fail "[${_name}] Stop annotate: no summary when no hook helped" "stdout: '${OUT:0:200}'"
     else
-      fail "[${_name}] Stop annotate: systemMessage from this turn's ledger" "stdout: '${OUT:0:200}'"
+      pass "[${_name}] Stop annotate: exit 0, no summary when no hook helped"
     fi
   fi
 
@@ -263,14 +295,16 @@ EOF
     [ "${_argv[0]}" = "ix" ] || continue
     _n=$(( _n + 1 ))
     _seen="${_seen} ${_argv[1]}"
-    _err=$(cd "$PROJECT" && timeout 20 "${_argv[@]}" 2>&1 >/dev/null)
+    # stdin from /dev/null: `ix context --from-issue -` and `ix hook` read it,
+    # and would otherwise swallow the rest of this loop's command list.
+    _err=$(cd "$PROJECT" && timeout 20 "${_argv[@]}" 2>&1 >/dev/null </dev/null)
     if printf '%s' "$_err" | grep -qiE "unknown option|unknown command|too many arguments|missing required argument|argument '.*' is invalid"; then
       fail "[${_name}] argv accepted by ix ${IX_VERSION}: ${_line}" "$(printf '%s' "$_err" | head -1)"
       _bad=1
     fi
   done < <(sed -n 's/^.*\] CMD //p' "$IX_DEBUG_LOG" | sort -u)
   local _sub _missing=""
-  for _sub in text locate inventory impact briefing status; do
+  for _sub in text locate inventory impact briefing status context hook; do
     case " ${_seen} " in *" ${_sub} "*) ;; *) _missing="${_missing} ${_sub}" ;; esac
   done
   # Optional flags the hooks add only for some inputs must have run too.

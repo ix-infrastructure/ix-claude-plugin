@@ -3,8 +3,10 @@
 
 # ix-bash.sh — PreToolUse hook for Bash
 #
-# Fires before Claude runs a Bash command. Detects grep/rg search patterns and
-# front-runs them with ix text + ix locate for graph-aware results.
+# Fires before Claude runs a Bash command. Detects grep/rg search patterns and,
+# when the pattern names one definition in the graph, says what the grep will
+# not: where it is defined and who calls it (ix_definition_context). Otherwise
+# it stays silent and the grep answers on its own.
 #
 # Output is a CONCISE one-line summary — not raw JSON dumps.
 #
@@ -66,30 +68,37 @@ if [ "$QUERY_INTENT" = "literal" ]; then
   exit 0
 fi
 
-# ── Run ix text + ix locate in parallel ───────────────────────────────────────
-ix_log "RUN ix text+locate pattern='$PATTERN'"
+# ── Resolve the pattern to a definition, and its callers ─────────────────────
+# Only locate: the grep about to run lists every text hit itself, so `ix text`
+# would only repeat them back.
+ix_log "RUN ix locate pattern='$PATTERN'"
 _t0=$(ix_now_ms)
-ix_run_text_locate "$PATTERN"
+_loc_err=$(mktemp)
+ix_log_command ix locate "$PATTERN" --format json
+_loc_status=0
+_LOC_RAW=$(ix_run_bounded "${IX_LOCATE_TIMEOUT:-4}" ix locate "$PATTERN" --format json 2>"$_loc_err") || _loc_status=$?
+if [ "$_loc_status" -ne 0 ]; then
+  # An unresolved target exits non-zero but still prints its JSON body (Ix#539):
+  # an answer, not a failure. Only an empty body is a failure worth filing.
+  if [ -n "$_LOC_RAW" ]; then
+    ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
+  else
+    ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
+      "ix locate '${PATTERN}'" "$(head -3 "$_loc_err")"
+  fi
+fi
+rm -f "$_loc_err"
+[ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate"; exit 0; }
 
-[ -z "$_TEXT_RAW" ] && [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix results"; exit 0; }
-
-# ── Summarise results ─────────────────────────────────────────────────────────
-ix_summarize_text "$_TEXT_RAW"
-ix_summarize_locate "$_LOC_RAW"
-ix_log "RESULTS text='${TEXT_PART:-<none>}' locate='${LOC_PART:-<none>}'"
-
-[ -z "$TEXT_PART" ] && [ -z "$LOC_PART" ] && { ix_log "SKIP summarize produced no content"; exit 0; }
-
-CONTEXT="[ix] bash grep intercepted for '${PATTERN}'"
-[ -n "$LOC_PART" ]  && CONTEXT="${CONTEXT} — ${LOC_PART}"
-[ -n "$TEXT_PART" ] && CONTEXT="${CONTEXT} | ${TEXT_PART}"
-CONTEXT="${CONTEXT} | Prefer: ix text '${PATTERN}' or ix locate '${PATTERN}' over shell grep"
+ix_definition_context "$_LOC_RAW"
+[ -z "$DEF_PART" ] && { ix_log "SKIP no single confident definition — grep answers alone"; exit 0; }
+CONTEXT="$DEF_PART"
 
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_log "DECISION augment ${#CONTEXT} chars (${_elapsed_ms}ms)"
 ix_log_injection "additionalContext" "$CONTEXT"
-ix_ledger_append "PreToolUse" "Bash" "${#CONTEXT}" "text,locate" "1" "" "$_elapsed_ms" \
-  "turned shell grep for ${PATTERN} into a graph-aware search with ranked matches."
+ix_ledger_append "PreToolUse" "Bash" "${#CONTEXT}" "locate,callers" "1" "" "$_elapsed_ms" \
+  "answered shell grep for ${PATTERN} with its definition and callers."
 
 # Context only, in both output styles: no permissionDecision. An "allow" here
 # would also skip the user's permission prompt for this tool call.

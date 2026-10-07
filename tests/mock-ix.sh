@@ -203,6 +203,38 @@ case "$SUBCOMMAND" in
       cat "${FX}/briefing.json"
     fi
     ;;
+  callers)
+    cat "${IX_MOCK_CALLERS_FILE:-${FX}/callers_results.json}"
+    if [ -n "${IX_MOCK_CALLERS_EXIT:-}" ]; then exit "${IX_MOCK_CALLERS_EXIT}"; fi
+    ;;
+  hook)
+    # `ix hook claude-post-edit` (Ix CLI 0.12.1+) reads the hook JSON on stdin.
+    # IX_MOCK_NO_HOOK=1 answers as a CLI from before the command existed.
+    if [ "${IX_MOCK_NO_HOOK:-0}" = "1" ]; then
+      echo "error: unknown command 'hook'" >&2
+      exit 1
+    fi
+    if [ "${2:-}" != "claude-post-edit" ]; then
+      echo "error: unknown hook '${2:-}'" >&2
+      exit 1
+    fi
+    _hook_in=$(cat)
+    if [ -n "${IX_MOCK_HOOK_STDIN_LOG:-}" ]; then printf '%s\n' "$_hook_in" >> "$IX_MOCK_HOOK_STDIN_LOG"; fi
+    cat "${IX_MOCK_HOOK_FILE:-${FX}/hook_post_edit.json}"
+    ;;
+  context)
+    # Only the form the briefing hook uses: `ix context --from-issue - --lean`.
+    _ctx_issue=0
+    for _arg in "$@"; do [ "$_arg" = "--from-issue" ] && _ctx_issue=1; done
+    if [ "$_ctx_issue" -ne 1 ]; then
+      echo "mock-ix: context without --from-issue is not mocked" >&2
+      exit 1
+    fi
+    _ctx_in=$(cat)
+    if [ -n "${IX_MOCK_CONTEXT_STDIN_LOG:-}" ]; then printf '%s\n' "$_ctx_in" >> "$IX_MOCK_CONTEXT_STDIN_LOG"; fi
+    if [ -n "${IX_MOCK_CONTEXT_CWD_LOG:-}" ]; then printf '%s\n' "$PWD" >> "$IX_MOCK_CONTEXT_CWD_LOG"; fi
+    cat "${IX_MOCK_CONTEXT_FILE:-${FX}/context_lean.txt}"
+    ;;
   status)
     # Called by ix_capture_async (fire-and-forget); silently succeed
     exit 0

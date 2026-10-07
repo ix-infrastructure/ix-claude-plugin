@@ -106,7 +106,7 @@ jobs:
         run: |
           echo "── Hooks ──"
           FAIL=0
-          for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh; do
+          for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-dependents.sh ix-map.sh; do
             if [ -f "hooks/$hook" ] && [ -x "hooks/$hook" ]; then
               echo "  [ok] $hook"
             elif [ -f "hooks/$hook" ]; then
@@ -170,11 +170,11 @@ jobs:
     name: Hooks against real ix
     runs-on: ubuntu-latest
     env:
-      IX_VERSION: "0.12.0"
+      IX_VERSION: "0.12.1"
       # sha256 of ix-<IX_VERSION>-linux-amd64.tar.gz, pinned here so a release
       # asset replaced after the fact (tarball and .sha256 together) fails the
       # job. Bump it with IX_VERSION.
-      IX_SHA256: "b9606253c5e300dbf4b933c82c6e0dc1d40a028aa344b5dc90dfe6dc34d89817"
+      IX_SHA256: "1a49d5f1fd466d986121f35195fcc3b765467c930012f3a5ec4765a219eeffc3"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

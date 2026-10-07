@@ -1,0 +1,15 @@
+{
+  "results": [
+    {"name": "createApp", "kind": "function", "path": "src/app.ts", "lineStart": 10, "lineEnd": 30,
+     "site": {"path": "src/app.ts", "line": 14, "snippet": "const auth = new AuthService(config);"}},
+    {"name": "login", "kind": "function", "path": "src/auth-routes.ts", "lineStart": 5, "lineEnd": 20,
+     "site": {"path": "src/auth-routes.ts", "line": 8, "snippet": "AuthService.login(req.body)"}},
+    {"name": "handler", "kind": "function", "path": "api/session.ts", "lineStart": 2, "lineEnd": 9,
+     "site": {"path": "api/session.ts", "line": 4, "snippet": "return AuthService.refresh(token);"}},
+    {"name": "testLogin", "kind": "function", "path": "test/auth.test.ts", "lineStart": 3, "lineEnd": 11,
+     "site": {"path": "test/auth.test.ts", "line": 6, "snippet": "new AuthService(fakeConfig)"}}
+  ],
+  "resultSource": "graph",
+  "resolvedTarget": {"kind": "class", "name": "AuthService", "path": "src/auth.ts", "resolutionMode": "exact"},
+  "summary": {"shown": 4, "total": 4, "resolved": 4, "unresolved": 0, "truncated": false}
+}

@@ -139,11 +139,12 @@ All hooks:
 
 Hook registry (`hooks/hooks.json`):
 ```
-UserPromptSubmit            → ix-briefing.sh      (10s timeout)
+UserPromptSubmit            → ix-briefing.sh      (15s timeout)
 PreToolUse(Grep|Glob)       → ix-intercept.sh     (10s timeout)
 PreToolUse(Bash)            → ix-bash.sh          (10s timeout)
 PreToolUse(Edit|Write|MultiEdit) → ix-pre-edit.sh (10s timeout)
 PostToolUse(Edit|Write|MultiEdit|NotebookEdit) → ix-ingest.sh (async, 30s)
+PostToolUse(Edit|MultiEdit|Write|Bash) → ix-dependents.sh (10s timeout)
 Stop                        → ix-annotate.sh      (5s timeout)
 Stop                        → ix-map.sh           (async, 60s)
 ```
@@ -180,14 +181,18 @@ tool runs. The native tool still runs afterward.
 - Glob calls without a path, bare extension globs such as `*.ts`, literal path globs, or empty inventory results
 
 **Grep path:**
-1. Extracts pattern from tool input. Skips if < 3 chars.
+1. Extracts pattern from tool input. Skips if < 3 chars, or if it is a phrase,
+   regex or literal (nothing in the graph is named that).
 2. Runs `ix text <pattern> --limit 15` and `ix locate <pattern>` in parallel
    (background processes via `&`, then `wait`)
-3. Graph confidence gate from locate result:
-   - confidence < 0.3 → drops symbol data, keeps text hits only
-   - confidence < 0.6 → prepends `⚠ Graph confidence low (N)` warning
-4. Injects one-line summary:
-   `[ix] 'pattern' — symbol: Name (kind, file.ts) | N text hits in a.ts, b.ts (+M more)`
+3. If locate resolved one definition with confidence >= 0.6, runs
+   `ix callers <name>` (bounded, `IX_CALLERS_TIMEOUT`, 4s) and injects what the
+   Grep's own results cannot say:
+   `` [ix] `Name` (kind) is defined at path:start-end; called from N places: a.ts:14 `call site` · b.ts:8 `…` (+M more) ``
+   Callers in the definition's directory come first; at most three are named.
+4. Otherwise silent: candidates, a low-confidence match or text hits alone are
+   things the Grep itself returns.
+   (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer.)
 
 **Glob path:**
 1. Extracts path from tool input
@@ -215,8 +220,28 @@ secret-like strings, or empty ix results.
 
 1. Extracts search pattern via sed (handles quoted strings, flags, bare patterns)
 2. Skips if pattern < 3 chars
-3. Runs `ix text + ix locate` in parallel (same logic as ix-intercept.sh)
-4. Injects: `[ix] bash grep intercepted for 'pattern' — symbol: ... | N hits | Prefer: ix text 'pattern' or ix locate 'pattern' over shell grep`
+3. Runs `ix locate` (bounded, `IX_LOCATE_TIMEOUT`, 4s); the grep about to run
+   lists the text hits itself
+4. If it resolved one definition with confidence >= 0.6, injects the same line
+   as ix-intercept.sh: where it is defined and its callers at their call sites.
+   Otherwise silent.
+
+---
+
+### ix-dependents.sh — PostToolUse(Edit|MultiEdit|Write|Bash)
+
+Fires after every edit, whatever made it: agents edit through `python3 - <<EOF`
+and `sed -i` as often as through Edit, and the edit-tool hooks never see those.
+
+1. Pipes the hook input to `ix hook claude-post-edit` (Ix CLI 0.12.1+; bounded by
+   `IX_DEPENDENTS_TIMEOUT`, 8s, inside which ix keeps its own 3s deadline)
+2. ix reads the working tree's `git diff` against HEAD, locates each changed
+   symbol in HEAD's text, and names its callers at their call sites, the
+   importers that use it and the tests that reach it -- each symbol once per
+   session, ~300 tokens at most
+3. Passes that on as `additionalContext` after the tool result; prints nothing
+   when ix has nothing to say, is too old to have `ix hook`, or fails
+4. `IX_EDIT_DEPENDENTS=off` turns it off
 
 ---
 
@@ -1125,6 +1150,7 @@ hooks/
   ix-bash.sh              PreToolUse(Bash): intercept grep/rg commands
   ix-pre-edit.sh          PreToolUse(Edit|Write): blast-radius warning before edit
   ix-ingest.sh            PostToolUse(Edit|Write): async graph update for changed file
+  ix-dependents.sh        PostToolUse(Edit|Write|Bash): callers, importers, tests of what an edit changed
   ix-map.sh               Stop: async full graph refresh after each response
   ix-report.sh            CLI utility: show recent captured errors from JSONL log
   hooks.json              Hook event → script mapping (read by Claude Code at startup)

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Makes the hooks tell Claude what a grep or a fresh session cannot, instead of what it already has. Measured with ix-bench on SWE-PolyBench (Claude Code 2.1.290, Ix v0.12.1): the prompt briefing was empty on every run (it needs Ix Pro and a project with goals or decisions on record), the shell-grep hint fired on 2 of 11 searches and repeated the grep's own hits plus "prefer ix text", which no agent followed, and the edit hooks never fired, because agents edited through Bash. With Ix's tools available as MCP, agents called none of them in 90 runs.
+
+- **A grep that names a definition gets its definition and callers.** `ix-bash.sh` and `ix-intercept.sh` (Grep) used to answer with the text hits the search was about to return anyway, a list of candidates, and a nudge to use `ix text`. When `ix locate` resolves one definition with confidence >= 0.6 they now inject where it is defined (file and line range) and who calls it, at the call site, nearest the definition first (`ix callers`, bounded by `IX_CALLERS_TIMEOUT`); otherwise they stay silent and the grep answers on its own. `ix-bash.sh` no longer runs `ix text` at all. `IX_BLOCK_ON_HIGH_CONFIDENCE=1` behaves as before.
+- **New `ix-dependents.sh`: what depends on what an edit changed.** A `PostToolUse` hook on `Edit|MultiEdit|Write|Bash` that hands the hook input to `ix hook claude-post-edit` (Ix CLI 0.12.1+). Ix reads the working tree's `git diff`, so an edit made through a Bash script counts, and names each changed symbol's callers, importers and tests once per session. Silent with an older ix, an unmapped project, a backend that is down, or nothing to report. `IX_EDIT_DEPENDENTS=off` disables it.
+- **The first prompt gets starting points.** On a session's first task-sized prompt (`IX_ISSUE_START_MIN_CHARS`, default 40), `ix-briefing.sh` runs `ix context --from-issue - --lean` on it and injects the files Ix trusts as starting points, or nothing when Ix trusts none. Once per session and project; bounded by `IX_ISSUE_START_TIMEOUT` (6s); the briefing hook's timeout goes from 10s to 15s to fit it. `IX_ISSUE_START=off` disables it.
+
+In ix-bench, Ix delivered this way -- starting points beside the prompt and dependents after each edit, as a Claude Code mod -- was the best arm on 30 multi-file issues (17/90 solved vs 13/90 baseline, not significant; +8% cost).
+
+Hook tests: 183 passing (151 in 3.2.0).
+
 ## 3.2.0
 
 Makes the hooks cost what they are worth. Four changes, all measured against recorded Claude Code sessions on a real repo: the hooks were spending 1.8s median and 10s p90 per intercepted search, with 128 outright timeouts.

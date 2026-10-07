@@ -1,0 +1,6 @@
+{
+  "results": [],
+  "resultSource": "graph",
+  "resolvedTarget": {"kind": "class", "name": "AuthService", "path": "src/auth.ts", "resolutionMode": "exact"},
+  "summary": {"shown": 0, "total": 0, "resolved": 0, "unresolved": 0, "truncated": false}
+}

@@ -704,6 +704,67 @@ ix_log() {
   printf '[%s] [%s] %s\n' "$_ts" "${IX_HOOK_NAME:-hook}" "$*" >> "${IX_DEBUG_LOG}" 2>/dev/null || true
 }
 
+# ── What grep cannot say about a name ────────────────────────────────────────
+# Usage: ix_definition_context LOCATE_RAW
+# Sets global: DEF_PART — empty unless locate resolved one definition with
+# confidence >= 0.6. Then: where it is defined, and who calls it, at the call
+# site, nearest the definition's file first:
+#   [ix] `beta` (function) is defined at src/lib.js:5-7; called from 2 places:
+#   src/app.js:4 `return beta(1);` · src/report.js:5 `return …`
+#
+# A grep the model is about to run already lists every line that mentions the
+# name, so repeating those hits back (what the Bash and Grep hooks used to do)
+# told it nothing, and "prefer ix text over grep" was not followed: in a
+# SWE-PolyBench smoke of the plugin (3 issues, Claude Code 2.1.290) the hint
+# fired twice and no agent ran ix, and with Ix's tools on offer as MCP no agent
+# called one in 90 runs. Which line is the definition, and which mentions are
+# calls, is the part only the graph knows. `ix callers` runs bounded (IX_CALLERS_TIMEOUT, default 4s); a failure
+# or timeout leaves the definition on its own.
+ix_definition_context() {
+  local _raw="$1" _json _name _kind _path _conf _start _end _where _cal_raw _cal_json _total _sites _more _dir
+  DEF_PART=""
+  _json=$(parse_json "$_raw")
+  [ -z "$_json" ] && return 0
+  _name=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
+  _path=$(echo "$_json" | jq -r '.resolvedTarget.path // empty' 2>/dev/null || echo "")
+  [ -z "$_name" ] || [ -z "$_path" ] && return 0
+  _conf=$(echo "$_json" | jq -r '(.confidence // .resolvedTarget.confidence // 1) | tostring' 2>/dev/null || echo "1")
+  ix_confidence_gate "${_conf:-1}"
+  [ "$CONF_GATE" = "ok" ] || return 0
+  _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // .resolvedTarget.type // "symbol"' 2>/dev/null || echo "symbol")
+  _start=$(echo "$_json" | jq -r '.lineRange.start // empty' 2>/dev/null || echo "")
+  _end=$(echo "$_json" | jq -r '.lineRange.end // empty' 2>/dev/null || echo "")
+  _where="$_path"
+  if [ -n "$_start" ]; then
+    _where="${_where}:${_start}"
+    [ -n "$_end" ] && [ "$_end" != "$_start" ] && _where="${_where}-${_end}"
+  fi
+  DEF_PART="[ix] \`${_name}\` (${_kind}) is defined at ${_where}"
+
+  ix_log_command ix callers "$_name" --format json
+  _cal_raw=$(ix_run_bounded "${IX_CALLERS_TIMEOUT:-4}" ix callers "$_name" --format json 2>/dev/null) || true
+  _cal_json=$(parse_json "$_cal_raw")
+  [ -z "$_cal_json" ] && return 0
+  _total=$(echo "$_cal_json" | jq -r '(.summary.total // (.results | length) // 0)' 2>/dev/null || echo 0)
+  if [ "${_total:-0}" -eq 0 ]; then
+    DEF_PART="${DEF_PART}; the graph has no callers for it"
+    return 0
+  fi
+  # Nearest first: callers in the definition's own directory lead.
+  _dir=$(dirname "$_path")
+  _sites=$(echo "$_cal_json" | jq -r --arg dir "$_dir/" '
+    [.results[]? | {p: (.site.path // .path // ""), l: (.site.line // .lineStart // ""),
+                    s: ((.site.snippet // .name // "") | gsub("\\s+"; " ") | .[0:60])}]
+    | sort_by(if (.p | startswith($dir)) then 0 else 1 end)
+    | .[:3] | map(.p + ":" + (.l | tostring) + " `" + .s + "`") | join(" · ")' 2>/dev/null || echo "")
+  _more=$(( _total > 3 ? _total - 3 : 0 ))
+  if [ -n "$_sites" ]; then
+    DEF_PART="${DEF_PART}; called from ${_total} place$([ "$_total" -eq 1 ] || echo s): ${_sites}"
+    [ "$_more" -gt 0 ] && DEF_PART="${DEF_PART} (+${_more} more)"
+  fi
+  return 0
+}
+
 # ── Summarise ix locate results ───────────────────────────────────────────────
 # Usage: ix_summarize_locate RAW_OUTPUT
 # Sets global: LOC_PART (empty string if no results)

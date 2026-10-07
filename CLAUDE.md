@@ -41,6 +41,7 @@ hooks/
   ix-bash.sh                 grep / rg detection inside Bash commands
   ix-pre-edit.sh             pre-edit impact warning
   ix-ingest.sh               post-edit guarded root-map request
+  ix-dependents.sh           post-edit dependents of the changed symbols (ix hook)
   ix-map.sh                  async Stop-time guarded root-map request
   ix-read.sh                 disabled placeholder; not registered
   ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh

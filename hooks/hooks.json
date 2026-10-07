@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ix-briefing.sh",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -52,6 +52,16 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ix-ingest.sh",
             "timeout": 30,
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ix-dependents.sh",
+            "timeout": 10
           }
         ]
       }
