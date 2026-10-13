@@ -1,0 +1,7 @@
+Use ix for structure:
+Find a symbol: `ix locate <name>` / `ix search <term>` before grep.
+Before editing a function/class/exported symbol: `ix callers <sym>` and `ix impact <sym>`.
+Understand a file/module: `ix explain <target>` / `ix overview <target>`.
+After editing: `ix around <file>` (if available) lists dependents.
+On ambiguous_target or exit 1 with candidates, retry with --pick N, --path <file> or --kind <kind>.
+On unresolved_target, `ix search <partial-name>`; git grep for symbols you just wrote.

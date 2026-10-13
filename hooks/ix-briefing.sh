@@ -29,12 +29,12 @@ _briefing_dir="${_briefing_dir:-$PWD}"
 _briefing_root=$(ix_git_root "$_briefing_dir" || printf '%s' "$_briefing_dir")
 IX_BRIEFING_CACHE="${IX_STATE_DIR}/briefing-$(hash_string "$_briefing_root")"
 _now=$(date +%s)
-_channel="${IX_ANNOTATE_CHANNEL:-modelSuffix}"
+_channel="${IX_ANNOTATE_CHANNEL:-systemMessage}"
 _mode="${IX_ANNOTATE_MODE:-brief}"
 _annotation_instruction=""
 
 if [ "$_mode" != "off" ] && { [ "$_channel" = "modelSuffix" ] || [ "$_channel" = "both" ]; }; then
-  _annotation_instruction='[ix meta] Attribution: if you received any lines starting with [ix] since the last user message, you must end your response with exactly this final structure and nothing after it:\nIx\n- <short bullet about how ix was used>\n- <optional second short bullet about what ix helped with>\nRules:\n- Use the heading exactly: Ix\n- Use 1 or 2 markdown bullets only\n- Do not write a prose paragraph\n- Do not put anything after the Ix section\n- Each bullet must be short, factual, and derived only from the [ix] lines you actually saw this turn\n- Do not mention search, read, edit, or session context unless it actually happened\n- Do not add an Ix section if you received no [ix] lines this turn\nExample:\nIx\n- surfaced symbol matches before search\n- flagged edit blast radius before modification'
+  _annotation_instruction='[ix meta] Attribution: if [ix] context helped this turn, end with an Ix heading and 1 or 2 short factual markdown bullets about that help. Otherwise omit attribution.'
 fi
 
 _briefing_fresh=0

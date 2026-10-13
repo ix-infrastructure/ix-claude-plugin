@@ -1,6 +1,6 @@
 ---
 name: ix-plan
-description: Generate a risk-ordered implementation plan for a set of targets. Assesses blast radius per target, finds data flows between them, and produces a safe change sequence.
+description: Use when planning a multi-file change or refactor, to order edits by risk and dependencies.
 argument-hint: <symbol1> [symbol2...] or "description of what you want to change" [--save [path]]
 ---
 
@@ -85,7 +85,7 @@ If Pro is available (detected above):
 
 Check for existing plans and goals that overlap with this change:
 ```bash
-ix plans --format text
+ix plan list --format text
 ix goal list --format text
 ```
 

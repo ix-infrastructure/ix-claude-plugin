@@ -1,6 +1,6 @@
 ---
 name: ix-impact
-description: Change risk analysis — blast radius, affected systems, and what to test. Depth scales with risk level; low-risk targets stop early.
+description: Use when preparing to edit a function, class or file, to see what depends on it and what to test.
 argument-hint: <symbol or file path to assess change risk for> [--save [path]]
 ---
 
