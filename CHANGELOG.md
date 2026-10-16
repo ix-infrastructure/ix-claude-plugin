@@ -7,10 +7,11 @@ Makes the hooks tell Claude what a grep or a fresh session cannot, instead of wh
 - **A grep that names a definition gets its definition and callers.** `ix-bash.sh` and `ix-intercept.sh` (Grep) used to answer with the text hits the search was about to return anyway, a list of candidates, and a nudge to use `ix text`. When `ix locate` resolves one definition with confidence >= 0.6 they now inject where it is defined (file and line range) and who calls it, at the call site, nearest the definition first (`ix callers`, bounded by `IX_CALLERS_TIMEOUT`); otherwise they stay silent and the grep answers on its own. `ix-bash.sh` no longer runs `ix text` at all. `IX_BLOCK_ON_HIGH_CONFIDENCE=1` behaves as before.
 - **New `ix-dependents.sh`: what depends on what an edit changed.** A `PostToolUse` hook on `Edit|MultiEdit|Write|Bash` that hands the hook input to `ix hook claude-post-edit` (Ix CLI 0.12.1+). Ix reads the working tree's `git diff`, so an edit made through a Bash script counts, and names each changed symbol's callers, importers and tests once per session. Silent with an older ix, an unmapped project, a backend that is down, or nothing to report. `IX_EDIT_DEPENDENTS=off` disables it.
 - **The first prompt gets starting points.** On a session's first task-sized prompt (`IX_ISSUE_START_MIN_CHARS`, default 40), `ix-briefing.sh` runs `ix context --from-issue - --lean` on it and injects the files Ix trusts as starting points, or nothing when Ix trusts none. Once per session and project; bounded by `IX_ISSUE_START_TIMEOUT` (6s); the briefing hook's timeout goes from 10s to 15s to fit it. `IX_ISSUE_START=off` disables it.
+- **The debug log says how long every hook took.** With `IX_DEBUG_LOG` set, each hook appends one `EXIT ms=<elapsed> rc=<exit code> tool=<tool_name or ->` line when it exits, on every path, including early skips and the `IX_*=off` switches, so a recorded session can be summed per hook (see the README). One EXIT trap in `hooks/lib/timing.sh`; with `IX_DEBUG_LOG` unset the hooks do not load it.
 
 In ix-bench, Ix delivered this way -- starting points beside the prompt and dependents after each edit, as a Claude Code mod -- was the best arm on 30 multi-file issues (17/90 solved vs 13/90 baseline, not significant; +8% cost).
 
-Hook tests: 183 passing (151 in 3.2.0).
+Hook tests: 207 passing (151 in 3.2.0).
 
 ## 3.2.0
 

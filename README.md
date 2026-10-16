@@ -96,6 +96,21 @@ The hooks will append lines like:
 
 `CMD ...` lines are the exact shell-escaped `ix` invocations. `INJECT ...` lines show the exact context a hook injected back into Claude.
 
+Every hook run also ends with exactly one `EXIT` line, on every path (including the runs where the hook decided to say nothing): wall time in milliseconds from the hook's first line to its exit, its exit code, and the payload's `tool_name` (`-` when there is none):
+
+```text
+[2026-10-15T18:54:03] [ix-intercept] EXIT ms=37 rc=0 tool=Grep
+```
+
+To see where a recorded session's hook time went, sum them by hook:
+
+```bash
+awk '/ EXIT ms=/ { sub(/^ms=/, "", $4); n[$2]++; t[$2] += $4 }
+     END { for (h in t) printf "%-16s %5d runs %8d ms\n", h, n[h], t[h] }' /tmp/ix-hooks.log
+```
+
+With `IX_DEBUG_LOG` unset the hooks skip all of this: no timer, no trap, no file.
+
 ## Uninstall
 
 ```

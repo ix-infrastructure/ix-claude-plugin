@@ -317,7 +317,7 @@ run_ix_hook_decide() {
   local _mode="$1" _content="$2"; shift 2
   _HOOK_EVENT="PreToolUse"
   _RC=0
-  _OUT=$(env "$@" bash -lc '
+  _OUT=$(env "$@" bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_hook_decide "$1" "$2"
   ' _ "${_mode}" "${_content}" 2>/dev/null) || _RC=$?
@@ -328,7 +328,7 @@ run_ix_hook_fallback() {
   local _mode="$1" _content="$2" _augment="$3"; shift 3
   _HOOK_EVENT="PreToolUse"
   _RC=0
-  _OUT=$(env "$@" bash -lc '
+  _OUT=$(env "$@" bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_hook_fallback "$1" "$2" "$3"
   ' _ "${_mode}" "${_content}" "${_augment}" 2>/dev/null) || _RC=$?
@@ -338,7 +338,7 @@ run_ix_hook_fallback() {
 run_ix_query_intent() {
   local _pattern="$1"; shift
   _RC=0
-  _OUT=$(env "$@" bash -lc '
+  _OUT=$(env "$@" bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_query_intent "$1"
     printf "%s\n" "$QUERY_INTENT"
@@ -348,7 +348,7 @@ run_ix_query_intent() {
 run_ix_looks_like_secret() {
   local _pattern="$1"; shift
   _RC=0
-  _OUT=$(env "$@" bash -lc '
+  _OUT=$(env "$@" bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     if ix_looks_like_secret "$1"; then
       printf "secret\n"
@@ -526,7 +526,7 @@ _OUT=$(env \
   IX_MOCK_BRIEFING_SLEEP=6 \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash -lc '
+  bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     _t0=$(date +%s)
     ix_health_check
@@ -667,7 +667,7 @@ _OUT=$(env \
   IX_HEALTH_CACHE="${_pro_ok_tmp}/ix-healthy" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash -lc '
+  bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_health_check
     if ix_check_pro; then printf "pro\n"; else printf "oss\n"; fi
@@ -1509,7 +1509,7 @@ env \
   TMPDIR="${_annotate_zero_ctx_tmp}" \
   IX_LEDGER_MODE="on" \
   IX_ERROR_MODE="off" \
-  bash -lc '
+  bash -c '
     source "'"${HOOKS_DIR}"'/ix-ledger.sh"
     INPUT='"'"'{"session_id":"test-session-001"}'"'"'
     ix_ledger_append "PreToolUse" "Grep" "0" "text,locate" "1" "" "5"
@@ -2077,6 +2077,193 @@ elif [ -n "${_missing}" ]; then
   fail "host/Glob deny reason lists every entity" "missing:${_missing} — reason: ${_reason:0:200}"
 else
   pass "host/Glob deny reason lists every entity"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Hook timing — one EXIT line per run in IX_DEBUG_LOG (hooks/lib/timing.sh)
+#
+# Each case runs the hook twice from identical fresh state: once without
+# IX_DEBUG_LOG (the reference) and once with it. The timed run must print the
+# same stdout, exit the same way, and leave exactly one line
+#   [<ts>] [<hook>] EXIT ms=<int> rc=<rc> tool=<tool_name or ->
+# ═════════════════════════════════════════════════════════════════════════════
+section "hook timing"
+
+# _timing_run <hook> <payload_file> <debug log path or ""> [KEY=VAL ...]
+# Sets _RC and _OUT. An empty log path runs with IX_DEBUG_LOG unset.
+_timing_run() {
+  local _hook="$1" _input="$2" _log="$3"; shift 3
+  local _run_tmp; _run_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  local -a _log_env=(-u IX_DEBUG_LOG)
+  [ -n "${_log}" ] && _log_env=(IX_DEBUG_LOG="${_log}")
+  _RC=0
+  _OUT=$(env -u CLAUDE_PROJECT_DIR "${_log_env[@]}" \
+    TMPDIR="${_run_tmp}" \
+    IX_HEALTH_CACHE="${_run_tmp}/ix-healthy" \
+    IX_LEDGER_MODE="off" \
+    IX_INGEST_INJECT="off" \
+    IX_ERROR_MODE="off" \
+    "$@" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/${_hook}" < "${_input}" 2>/dev/null) || _RC=$?
+}
+
+# timed_case <name> <hook> <payload_file> <want_rc> <want_tool> [KEY=VAL ...]
+timed_case() {
+  local _name="$1" _hook="$2" _input="$3" _want_rc="$4" _want_tool="$5"; shift 5
+  local _log _plain_out _plain_rc _lines _line _re
+  _log="$(mktemp -d -p "${TEST_TMPDIR}")/ix-hooks.log"
+
+  _timing_run "${_hook}" "${_input}" "" "$@"
+  _plain_out="${_OUT}"; _plain_rc="${_RC}"
+  _timing_run "${_hook}" "${_input}" "${_log}" "$@"
+
+  _lines=$(grep -c ' EXIT ms=' "${_log}" 2>/dev/null || true)
+  _line=$(grep ' EXIT ms=' "${_log}" 2>/dev/null | head -1 || true)
+  _re="^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\] \[${_hook%.sh}\] EXIT ms=[0-9]+ rc=${_want_rc} tool=${_want_tool}\$"
+  if [ "${_plain_rc}" != "${_want_rc}" ]; then
+    fail "${_name}" "reference run exited ${_plain_rc}, test expects ${_want_rc}"
+  elif [ "${_RC}" != "${_plain_rc}" ]; then
+    fail "${_name}" "exit code changed under IX_DEBUG_LOG: ${_plain_rc} -> ${_RC}"
+  elif [ "${_OUT}" != "${_plain_out}" ]; then
+    fail "${_name}" "stdout changed under IX_DEBUG_LOG: '${_plain_out:0:80}' -> '${_OUT:0:80}'"
+  elif [ "${_lines:-0}" != "1" ]; then
+    fail "${_name}" "expected exactly one EXIT line, got ${_lines:-0} — log: $(head -c 300 "${_log}" 2>/dev/null)"
+  elif ! [[ "${_line}" =~ ${_re} ]]; then
+    fail "${_name}" "EXIT line does not match: ${_line}"
+  else
+    pass "${_name}"
+  fi
+}
+
+_tm_fixture() {
+  local _f; _f=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+  printf '%s' "$1" > "${_f}"
+  printf '%s' "${_f}"
+}
+
+# ix-briefing.sh (UserPromptSubmit payloads carry no tool_name)
+timed_case "timing/briefing silent" ix-briefing.sh "${_USER_PROMPT_FIXTURE}" 0 - \
+  IX_ISSUE_START=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+timed_case "timing/briefing injects" ix-briefing.sh "${_USER_PROMPT_FIXTURE}" 0 -
+
+# ix-intercept.sh
+timed_case "timing/intercept no tool_name" ix-intercept.sh "${_EMPTY_FIXTURE}" 0 -
+timed_case "timing/intercept full path" ix-intercept.sh "${FX_IN}/grep_plain.json" 0 Grep
+# A set -e failure: jq cannot parse the payload, the hook dies with jq's code.
+_TM_BAD_JSON=$(_tm_fixture '{"tool_name": "Grep", not json')
+_timing_run ix-intercept.sh "${_TM_BAD_JSON}" ""
+timed_case "timing/intercept set -e failure keeps its exit code" ix-intercept.sh "${_TM_BAD_JSON}" "${_RC}" Grep
+if [ "${_RC}" -eq 0 ]; then
+  fail "timing/intercept bad payload is a set -e failure" "expected a non-zero exit, got 0"
+else
+  pass "timing/intercept bad payload is a set -e failure"
+fi
+
+# ix-bash.sh
+timed_case "timing/bash not a search" ix-bash.sh "${_BASH_LS_FIXTURE}" 0 Bash
+timed_case "timing/bash full path" ix-bash.sh "${_BASH_GREP_FIXTURE}" 0 Bash
+
+# ix-pre-edit.sh
+timed_case "timing/pre-edit skipped file type" ix-pre-edit.sh "${_EDIT_MD_FIXTURE}" 0 Edit
+timed_case "timing/pre-edit full path" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" 0 Edit
+
+# ix-dependents.sh — the IX_EDIT_DEPENDENTS=off switch exits before stdin is read
+timed_case "timing/dependents off switch still logs" ix-dependents.sh "${_DEP_BASH_FIXTURE}" 0 - \
+  IX_EDIT_DEPENDENTS=off
+timed_case "timing/dependents no tool_name" ix-dependents.sh "${_EMPTY_FIXTURE}" 0 -
+timed_case "timing/dependents full path" ix-dependents.sh "${_DEP_BASH_FIXTURE}" 0 Bash
+
+# ix-ingest.sh / ix-map.sh — the guarded automatic map
+_TM_EDIT_A=$(_tm_fixture "$(_am_edit "${_AM_REPO_A}" "${_AM_REPO_A}/src/app.ts")")
+_TM_STOP_A=$(_tm_fixture "$(_am_stop "${_AM_REPO_A}")")
+_TM_STOP_PLAIN=$(_tm_fixture "$(_am_stop "${_AM_PLAIN}")")
+_tm_map_log="${_am_base}/timing-map.log"
+_tm_map_env=(HOME="${_AM_FAKE_HOME}" IX_MOCK_MAP_LOG="${_tm_map_log}" IX_MOCK_MAPPED_ROOTS="${_AM_REPO_A}")
+timed_case "timing/ingest no file_path" ix-ingest.sh "${_EMPTY_FIXTURE}" 0 - "${_tm_map_env[@]}"
+timed_case "timing/ingest full path" ix-ingest.sh "${_TM_EDIT_A}" 0 Edit "${_tm_map_env[@]}"
+timed_case "timing/map not a git repo" ix-map.sh "${_TM_STOP_PLAIN}" 0 - "${_tm_map_env[@]}"
+timed_case "timing/map full path" ix-map.sh "${_TM_STOP_A}" 0 - "${_tm_map_env[@]}"
+if _am_wait_maps "${_tm_map_log}" 1; then
+  pass "timing/full map path really mapped"
+else
+  fail "timing/full map path really mapped" "no ix map call in ${_tm_map_log}"
+fi
+
+# ix-annotate.sh — empty stdin exits before the library is sourced; the full
+# path reads a ledger seeded by a real intercept run (reading does not consume it).
+_tm_ann=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_tm_ann}/home"
+env HOME="${_tm_ann}/home" TMPDIR="${_tm_ann}" IX_HEALTH_CACHE="${_tm_ann}/ix-healthy" \
+  IX_LEDGER_MODE="on" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" >/dev/null 2>&1 || true
+_TM_EMPTY_STDIN=$(_tm_fixture '')
+timed_case "timing/annotate empty stdin" ix-annotate.sh "${_TM_EMPTY_STDIN}" 0 -
+timed_case "timing/annotate mode off" ix-annotate.sh "${_STOP_FIXTURE}" 0 - IX_ANNOTATE_MODE=off
+timed_case "timing/annotate full path" ix-annotate.sh "${_STOP_FIXTURE}" 0 - \
+  HOME="${_tm_ann}/home" TMPDIR="${_tm_ann}" IX_LEDGER_MODE="on"
+_timing_run ix-annotate.sh "${_STOP_FIXTURE}" "" HOME="${_tm_ann}/home" TMPDIR="${_tm_ann}" IX_LEDGER_MODE="on"
+if printf '%s' "${_OUT}" | grep -q "AuthService"; then
+  pass "timing/annotate full path emits its summary"
+else
+  fail "timing/annotate full path emits its summary" "output: ${_OUT:0:140}"
+fi
+
+# With IX_DEBUG_LOG unset (or empty) nothing is written anywhere.
+_tm_quiet=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_tm_quiet}/home" "${_tm_quiet}/tmp"
+for _tm_case in \
+  "ix-briefing.sh:${_USER_PROMPT_FIXTURE}" \
+  "ix-intercept.sh:${FX_IN}/grep_plain.json" \
+  "ix-bash.sh:${_BASH_GREP_FIXTURE}" \
+  "ix-pre-edit.sh:${FX_IN}/edit_high_risk.json" \
+  "ix-dependents.sh:${_DEP_BASH_FIXTURE}" \
+  "ix-ingest.sh:${_TM_EDIT_A}" \
+  "ix-map.sh:${_TM_STOP_A}" \
+  "ix-annotate.sh:${_STOP_FIXTURE}"; do
+  for _tm_dbg in unset empty; do
+    _tm_env=(-u IX_DEBUG_LOG)
+    [ "${_tm_dbg}" = "empty" ] && _tm_env=(IX_DEBUG_LOG=)
+    (cd "${_tm_quiet}" && env -u CLAUDE_PROJECT_DIR "${_tm_env[@]}" \
+      HOME="${_tm_quiet}/home" TMPDIR="${_tm_quiet}/tmp" \
+      IX_LEDGER_MODE="off" IX_ERROR_MODE="off" IX_MOCK_MAP_LOG="${_tm_quiet}/map.log" \
+      IX_MOCK_MAPPED_ROOTS="${_AM_REPO_A}" PATH="${TESTS_DIR}:${PATH}" \
+      bash "${HOOKS_DIR}/${_tm_case%%:*}" < "${_tm_case#*:}" >/dev/null 2>&1) || true
+  done
+done
+sleep 0.3
+_tm_found=$(grep -rl "EXIT ms=" "${_tm_quiet}" "${_AM_REPO_A}" 2>/dev/null | head -3 || true)
+_tm_logs=$(find "${_tm_quiet}" "${_AM_REPO_A}" -name '*.log' ! -name 'map.log' 2>/dev/null | head -3)
+if [ -n "${_tm_found}${_tm_logs}" ]; then
+  fail "timing/IX_DEBUG_LOG unset writes no log" "found: ${_tm_found} ${_tm_logs}"
+else
+  pass "timing/IX_DEBUG_LOG unset writes no log"
+fi
+
+# macOS: bash 3.2 has no EPOCHREALTIME and BSD date prints "<secs>3N" for
+# +%s%3N. The helper must still log an integer, and keep the exit code.
+_tm_bsd=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_tm_bsd}/bin"
+cat > "${_tm_bsd}/bin/date" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *%3N*) printf '%s3N\n' "$(command -p date +%s)" ;;
+  *) command -p date "$@" ;;
+esac
+EOF
+chmod +x "${_tm_bsd}/bin/date"
+_RC=0
+env IX_DEBUG_LOG="${_tm_bsd}/ix-hooks.log" PATH="${_tm_bsd}/bin:${PATH}" \
+  bash -c 'unset EPOCHREALTIME; source "$1/lib/timing.sh" ix-test; exit 7' _ "${HOOKS_DIR}" \
+  >/dev/null 2>&1 || _RC=$?
+_line=$(cat "${_tm_bsd}/ix-hooks.log" 2>/dev/null || true)
+_re='^\[[0-9T:-]+\] \[ix-test\] EXIT ms=[0-9]+ rc=7 tool=-$'
+if [ "${_RC}" -ne 7 ]; then
+  fail "timing/no EPOCHREALTIME, BSD date" "exit code changed: 7 -> ${_RC}"
+elif ! [[ "${_line}" =~ ${_re} ]]; then
+  fail "timing/no EPOCHREALTIME, BSD date" "line: ${_line}"
+else
+  pass "timing/no EPOCHREALTIME, BSD date"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

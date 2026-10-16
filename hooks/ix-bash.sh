@@ -13,6 +13,9 @@
 # Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, Bash still runs
 # Exit 0 + no stdout  → no-op, Bash runs normally
 
+# One EXIT line with this run's wall time in IX_DEBUG_LOG; nothing when unset.
+[ -z "${IX_DEBUG_LOG:-}" ] || source "${BASH_SOURCE[0]%/*}/lib/timing.sh" ix-bash 2>/dev/null
+
 set -euo pipefail
 
 INPUT=$(cat)
