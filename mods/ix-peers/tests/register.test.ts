@@ -48,6 +48,7 @@ type World = {
   runs: { argv: readonly string[]; stdin?: string }[]
   spawns: (readonly string[])[]
   submits: string[]
+  notices: string[]
   localSends: string[]
   coreSends: string[]
   emit: (event: PeerEvent) => void
@@ -61,7 +62,7 @@ type World = {
  * `session.send` and reports what it answered.
  */
 function world(on: On, options: { send?: object; sendExit?: number; env?: Record<string, string> } = {}): World {
-  const w: World = { runs: [], spawns: [], submits: [], localSends: [], coreSends: [], emit: () => undefined, clock: mock.clock(on), sessionId: SID }
+  const w: World = { runs: [], spawns: [], submits: [], notices: [], localSends: [], coreSends: [], emit: () => undefined, clock: mock.clock(on), sessionId: SID }
   const queue: string[] = []
   let wake: (() => void) | null = null
   w.emit = event => {
@@ -83,6 +84,11 @@ function world(on: On, options: { send?: object; sendExit?: number; env?: Record
     const { Box } = $.ui.resolve(e)
 
     return h(Box, null) as RenderElement
+  })
+  on('session.append', (_$, e, next) => {
+    if (e.message.type === 'system') w.notices.push(JSON.stringify(e.message.content))
+
+    return next(e)
   })
   on('prompt.submit', (_$, e) => {
     w.submits.push(e.text)
@@ -232,6 +238,7 @@ describe('ix-peers: receiving from your own sessions (the built-in rules)', () =
 
     expect(w.submits).toEqual([])
     expect((ran as { context?: readonly string[] }).context?.join('\n')).toContain('from="ix:sam/laptop [7b7b7b]"')
+    expect(w.notices.join('\n')).toContain('ix:sam/laptop [7b7b7b] sent a message: Migration landed on main.')
   })
 
   test('a message queued at the end of a turn starts the next one', async ($, on) => {

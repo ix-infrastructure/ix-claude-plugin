@@ -102,9 +102,12 @@ const send = async ($: EngineInterface, to: string, text: string, notifyWhenIdle
 
 // A delivery reaches the model as a cross-session message does: at the
 // next tool round while a turn runs, as a turn of its own when idle.
-const deliver = async ($: EngineInterface, text: string) => {
+const deliver = async ($: EngineInterface, text: string, preview: string) => {
   if (status === 'busy') {
     await update($, pending, list => [...list, text])
+    // The model reads it at its next tool round, where the person sees
+    // nothing: a notice row puts it in the transcript as it arrives.
+    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: preview }] } }).catch(() => undefined)
   } else {
     void $.prompt.submit({ text })
   }
@@ -142,7 +145,7 @@ const resolveHeld = async ($: EngineInterface, id: string, isAccepted: boolean) 
   const message = await take($, id)
   if (!message) return
   if (isAccepted) {
-    await deliver($, wrapMessage(fromAddress(message.from), message.text))
+    await deliver($, wrapMessage(fromAddress(message.from), message.text), `${fromAddress(message.from)} sent a message: ${firstLine(message.text, 100)}`)
   } else {
     notice($, message, 'was declined by its user')
   }
@@ -169,7 +172,7 @@ const isHeld = async ($: EngineInterface, event: PeerEvent & { kind: 'peer.messa
 const onEvent = async ($: EngineInterface, current: Run, event: PeerEvent) => {
   if (event.toSession !== current.sessionId || current.isEnded) return
   if (event.kind === 'peer.idle') {
-    await deliver($, idleNotice(event.from, event.reason))
+    await deliver($, idleNotice(event.from, event.reason), idleNotice(event.from, event.reason))
 
     return
   }
@@ -183,7 +186,7 @@ const onEvent = async ($: EngineInterface, current: Run, event: PeerEvent) => {
 
     return
   }
-  await deliver($, wrapMessage(address, event.text))
+  await deliver($, wrapMessage(address, event.text), `${address} sent a message: ${firstLine(event.text, 100)}`)
 }
 
 // The stream lives as long as the run: an exit (network, auth, the CLI's
