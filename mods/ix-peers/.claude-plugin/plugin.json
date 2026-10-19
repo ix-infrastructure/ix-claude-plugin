@@ -1,0 +1,9 @@
+{
+  "name": "ix-peers",
+  "version": "0.1.0",
+  "description": "Cross-machine Claude session messaging over Ix: linked teammates' sessions show up in ListAgents and SendMessage reaches them.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Ix Infrastructure"
+  }
+}

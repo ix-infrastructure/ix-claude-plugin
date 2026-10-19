@@ -7,8 +7,14 @@
     {
       "name": "ix-memory",
       "source": "./",
-      "description": "Ix Memory integration — cognitive skills, agentic workflows, and auto-ingestion hooks for graph-aware engineering",
+      "description": "Ix Memory integration \u2014 cognitive skills, agentic workflows, and auto-ingestion hooks for graph-aware engineering",
       "version": "3.2.0"
+    },
+    {
+      "name": "ix-peers",
+      "source": "./mods/ix-peers",
+      "description": "Cross-machine Claude session messaging over Ix: linked teammates' sessions in ListAgents, SendMessage reaches them.",
+      "version": "0.1.0"
     }
   ]
 }
