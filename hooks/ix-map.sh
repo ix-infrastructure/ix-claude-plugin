@@ -21,6 +21,9 @@
 # runs synchronously before this hook so the message appears before the session
 # ends. Model-authored "Ix:" lines are injected earlier by ix-briefing.sh.
 
+# One EXIT line with this run's wall time in IX_DEBUG_LOG; nothing when unset.
+[ -z "${IX_DEBUG_LOG:-}" ] || source "${BASH_SOURCE[0]%/*}/lib/timing.sh" ix-map 2>/dev/null
+
 set -euo pipefail
 
 INPUT=$(cat)

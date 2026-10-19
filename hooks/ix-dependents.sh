@@ -24,6 +24,9 @@
 # Exit 0 + JSON stdout → hookSpecificOutput.additionalContext after the tool result
 # Exit 0 + no stdout  → no-op
 
+# One EXIT line with this run's wall time in IX_DEBUG_LOG; nothing when unset.
+[ -z "${IX_DEBUG_LOG:-}" ] || source "${BASH_SOURCE[0]%/*}/lib/timing.sh" ix-dependents 2>/dev/null
+
 set -euo pipefail
 
 [ "${IX_EDIT_DEPENDENTS:-on}" = "off" ] && exit 0
