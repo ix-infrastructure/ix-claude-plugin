@@ -1,3 +1,5 @@
+// Copyright 2026 Ix Infrastructure Inc.
+
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { On, RenderElement } from 'claude-code'

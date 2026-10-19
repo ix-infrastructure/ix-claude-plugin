@@ -1,3 +1,5 @@
+// Copyright 2026 Ix Infrastructure Inc.
+
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { Peer } from '../types'

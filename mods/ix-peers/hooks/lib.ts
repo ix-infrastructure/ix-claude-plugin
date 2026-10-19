@@ -1,3 +1,5 @@
+// Copyright 2026 Ix Infrastructure Inc.
+
 // Pure helpers for the ix-peers mod: addressing, framing and parsing of the
 // `ix peer` CLI's output. No `$` here, so every rule is unit-testable.
 

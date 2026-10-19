@@ -1,3 +1,5 @@
+// Copyright 2026 Ix Infrastructure Inc.
+
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
