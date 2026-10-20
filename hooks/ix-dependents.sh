@@ -13,13 +13,19 @@
 #
 # Bash too: agents edit with `python3 - <<EOF` and `sed -i` as often as with
 # Edit, and the pre-edit and ingest hooks (matched on the edit tools) never see
-# those. The diff does. A Bash call that changed nothing costs `ix hook` one
-# git call and prints nothing.
+# those. The diff does. A Bash command that can only read (`cat`, `ls`,
+# `git diff`; see hooks/lib/bash-write.sh) skips `ix hook`: the diff has not
+# moved, and the next command that may write catches up. After a report, the
+# next command runs it once even if it only reads, as ix carries the symbols it
+# capped to its next run. IX_BASH_EDIT_CLASSIFIER=off runs it after every Bash
+# command.
 #
 # Never in the way: an older ix without `ix hook`, a backend that is down, an
 # unmapped project or a timeout all print nothing and exit 0.
 #
-# IX_EDIT_DEPENDENTS=off turns it off.
+# Off by default: the report rarely names a caller that changes what the agent
+# does next, and it blocks every edit and Bash call while it runs.
+# IX_EDIT_DEPENDENTS=on turns it on.
 #
 # Exit 0 + JSON stdout → hookSpecificOutput.additionalContext after the tool result
 # Exit 0 + no stdout  → no-op
@@ -29,18 +35,49 @@
 
 set -euo pipefail
 
-[ "${IX_EDIT_DEPENDENTS:-on}" = "off" ] && exit 0
+# Off: exit before reading stdin, jq or the library.
+[ "${IX_EDIT_DEPENDENTS:-off}" = "on" ] || exit 0
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 [ -z "$TOOL" ] && exit 0
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The marker that says this session's last report is owed a follow-up run. It
+# lives in the plugin's state dir (IX_STATE_DIR in ix-lib.sh: the uid-scoped
+# cache dir, else the XDG one), found here without the library so a read-only
+# command can check it cheaply. Empty when neither dir is usable yet.
+_dep_owed_marker() {
+  local _sid="${1:-none}" _d
+  for _d in "${TMPDIR:-/tmp}/ix-plugin-cache-${UID:-0}" \
+            "${XDG_STATE_HOME:-${HOME:-/nonexistent}/.local/state}/ix-claude-plugin"; do
+    if [ -d "$_d" ] && [ -O "$_d" ] && [ ! -L "$_d" ]; then
+      printf '%s/dependents-owed-%s' "$_d" "${_sid//[^A-Za-z0-9_.-]/_}"
+      return 0
+    fi
+  done
+}
+
+SESSION=$(echo "$INPUT" | jq -r '.session_id // empty')
+_followup=""
+if [ "$TOOL" = "Bash" ] && [ "${IX_BASH_EDIT_CLASSIFIER:-on}" != "off" ]; then
+  source "${_HOOK_DIR}/lib/bash-write.sh"
+  if ! ix_bash_may_write "$(echo "$INPUT" | jq -r '.tool_input.command // empty')"; then
+    _owed=$(_dep_owed_marker "$SESSION")
+    { [ -n "$_owed" ] && [ -e "$_owed" ]; } || exit 0
+    _followup=" (read-only, follow-up after a report)"
+  fi
+fi
 
 # ── Shared library ────────────────────────────────────────────────────────────
-_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
 ix_health_check
 IX_HOOK_NAME="ix-dependents"
-ix_log "ENTRY tool=$TOOL"
+ix_log "ENTRY tool=$TOOL${_followup}"
+
+# The library has created the state dir by now; this run settles any debt.
+_owed=$(_dep_owed_marker "$SESSION")
+if [ -n "$_owed" ] && [ -e "$_owed" ]; then rm -f "$_owed" 2>/dev/null || true; fi
 
 _t0=$(ix_now_ms)
 ix_log_command ix hook claude-post-edit
@@ -57,6 +94,9 @@ fi
 
 CONTEXT=$(printf '%s' "$_out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || echo "")
 [ -z "$CONTEXT" ] && { ix_log "SKIP no dependents to report"; exit 0; }
+
+# Owe the next command a run, even a read-only one.
+{ [ -z "$_owed" ] || : > "$_owed"; } 2>/dev/null || true
 
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_log "DECISION augment ${#CONTEXT} chars (${_elapsed_ms}ms)"

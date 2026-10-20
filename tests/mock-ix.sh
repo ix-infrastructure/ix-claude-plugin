@@ -38,6 +38,8 @@
 #                            others report false, as the real CLI does for a
 #                            workspace that was never mapped)
 #   IX_MOCK_MAP_LOG        — `ix map` appends "argv=… | IX_AUTO_MAP=… | cwd=…"
+#   IX_MOCK_CALL_LOG       — every call appends its argv, one line per call
+#                            (so a test can assert that a hook made no ix call)
 #
 # Strict where the real CLI is strict, so a hook cannot keep calling something
 # that only ever worked against this mock:
@@ -47,6 +49,7 @@
 #   `ix smells … --path`    → exit 1 "unknown option '--path'"
 
 SUBCOMMAND="${1:-}"
+if [ -n "${IX_MOCK_CALL_LOG:-}" ]; then printf '%s\n' "$*" >> "$IX_MOCK_CALL_LOG"; fi
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FX="${SELF_DIR}/fixtures/ix_outputs"
 

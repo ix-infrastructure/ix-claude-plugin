@@ -56,6 +56,11 @@ export TMPDIR="${ROOT_TMP}/tmp"
 export IX_ENDPOINT="http://127.0.0.1:1"
 export IX_NO_UPDATE_CHECK=1
 unset IX_ANNOTATE_MODE IX_ANNOTATE_CHANNEL IX_HOOK_OUTPUT_STYLE IX_BLOCK_ON_HIGH_CONFIDENCE
+# The search hints, the pre-edit warning and the post-edit dependents are off by
+# default; switched on, they run `ix locate`, `ix text`, `ix inventory`,
+# `ix impact` and `ix hook`, which this suite exists to check against the CLI.
+export IX_GREP_INTERCEPT=on IX_EDIT_DEPENDENTS=on IX_PRE_EDIT_GATE=on
+unset IX_BASH_EDIT_CLASSIFIER
 mkdir -p "$HOME" "$TMPDIR"
 
 IX_VERSION=$(ix --version 2>/dev/null | head -1)
@@ -321,6 +326,27 @@ EOF
 
 run_scenario unmapped
 run_scenario backend
+
+# With the switches unset, the off-by-default hooks run no ix at all.
+section "off by default"
+unset IX_GREP_INTERCEPT IX_EDIT_DEPENDENTS IX_PRE_EDIT_GATE
+SESSION="ci-defaults"
+export IX_DEBUG_LOG="${ROOT_TMP}/hooks-defaults.log"
+: > "$IX_DEBUG_LOG"
+for _case in \
+  'ix-intercept.sh|PreToolUse|Grep|{"pattern":"computeTotal"}' \
+  'ix-intercept.sh|PreToolUse|Glob|{"pattern":"**/*.js","path":"src"}' \
+  'ix-bash.sh|PreToolUse|Bash|{"command":"rg computeTotal src"}' \
+  'ix-pre-edit.sh|PreToolUse|Edit|{"file_path":"src/math.js","old_string":"a","new_string":"b"}' \
+  'ix-dependents.sh|PostToolUse|Bash|{"command":"sed -i s/a/b/ src/math.js"}'; do
+  IFS='|' read -r _hook _event _tool _input <<< "$_case"
+  _label="[defaults] ${_hook} ${_tool}: silent, no ix call"
+  if run_hook "$_label" "$_hook" "$_event" "$(payload "$_event" "$_tool" "$_input")"; then
+    if [ -n "$OUT" ]; then fail "$_label" "stdout: ${OUT:0:200}"
+    elif grep -q '\] CMD ix ' "$IX_DEBUG_LOG"; then fail "$_label" "$(grep '\] CMD ix ' "$IX_DEBUG_LOG" | head -1)"
+    else pass "$_label"; fi
+  fi
+done
 
 # `ix map <root> --silent` only runs once a graph is complete, which needs a
 # backend; check its flag against the CLI's own help instead.

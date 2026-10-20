@@ -17,6 +17,19 @@ FAIL_COUNT=0
 TEST_TMPDIR=$(mktemp -d)
 trap 'rm -rf "${TEST_TMPDIR}"' EXIT
 
+# The search hints (ix-bash.sh, ix-intercept.sh), the pre-edit warning and the
+# post-edit dependents are off by default. Every case below runs them switched
+# on, where they must behave exactly as they did when they were always on; the
+# "off by default" section turns the switches back off (_switches_default).
+_switches_on() {
+  export IX_GREP_INTERCEPT=on IX_EDIT_DEPENDENTS=on IX_PRE_EDIT_GATE=on
+  unset IX_BASH_EDIT_CLASSIFIER
+}
+_switches_default() {
+  unset IX_GREP_INTERCEPT IX_EDIT_DEPENDENTS IX_PRE_EDIT_GATE IX_BASH_EDIT_CLASSIFIER
+}
+_switches_on
+
 # ── Output helpers ─────────────────────────────────────────────────────────────
 
 pass() { printf 'PASS  %s\n' "$1"; PASS_COUNT=$(( PASS_COUNT + 1 )); }
@@ -1218,6 +1231,293 @@ assert_empty "dependents/IX_EDIT_DEPENDENTS=off"
 run_hook ix-dependents.sh "${_EMPTY_FIXTURE}"
 assert_empty "dependents/no-tool input"
 
+# ── Read-only Bash commands skip `ix hook` (hooks/lib/bash-write.sh) ─────────
+# The report is diff-based, so after `cat` or `git diff` there is nothing new;
+# the next command that may write catches up. After a report the next command
+# runs the hook once even if it only reads: ix carries the symbols it capped
+# to its next run.
+
+# _dep_fixture <session> <tool> <command>  → path of a PostToolUse payload
+_dep_fixture() {
+  local _f; _f=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+  jq -cn --arg sid "$1" --arg tool "$2" --arg cmd "$3" \
+    '{session_id: $sid, hook_event_name: "PostToolUse", cwd: "/repo", tool_name: $tool,
+      tool_input: (if $tool == "Bash" then {command: $cmd} else {file_path: "/repo/src/auth.ts"} end)}' > "${_f}"
+  printf '%s' "${_f}"
+}
+
+# dep_run <name> <want: hook|skip> <fixture> <state dir> [KEY=VAL ...]
+# Runs ix-dependents.sh with a TMPDIR that persists across calls (the plugin's
+# state lives there) and checks whether it asked `ix hook`.
+dep_run() {
+  local _name="$1" _want="$2" _fx="$3" _state="$4"; shift 4
+  local _calls="${_state}/calls.log" _asked=skip
+  : > "${_calls}"
+  run_hook ix-dependents.sh "${_fx}" TMPDIR="${_state}" IX_MOCK_CALL_LOG="${_calls}" "$@"
+  grep -q '^hook claude-post-edit' "${_calls}" && _asked=hook
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"
+  elif [ "${_asked}" != "${_want}" ]; then
+    fail "${_name}" "expected ${_want}, got ${_asked} (ix calls: $(tr '\n' ';' < "${_calls}"))"
+  elif [ "${_want}" = "skip" ] && [ -n "${_OUT}" ]; then
+    fail "${_name}" "a skipped run printed: ${_OUT:0:100}"
+  else
+    pass "${_name}"
+  fi
+}
+
+_DEP_GIT_DIFF=$(_dep_fixture s-ro Bash "git diff")
+_DEP_CAT_HEAD=$(_dep_fixture s-ro Bash "cat src/auth.ts | head -20")
+_DEP_SED_I=$(_dep_fixture s-ro Bash "sed -i 's/a/b/' src/auth.ts")
+_DEP_EDIT=$(_dep_fixture s-ro Edit "")
+_DEP_OTHER_SESSION=$(_dep_fixture s-other Bash "git status")
+
+_dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
+dep_run "dependents/read-only: git diff skips ix hook" skip "${_DEP_GIT_DIFF}" "${_dep_state}"
+dep_run "dependents/read-only: a cat | head pipeline skips ix hook" skip "${_DEP_CAT_HEAD}" "${_dep_state}"
+dep_run "dependents/read-only: sed -i asks ix hook" hook "${_DEP_SED_I}" "${_dep_state}"
+assert_additional_context "dependents/read-only: sed -i still reports" "Ix: you changed \`login\`"
+dep_run "dependents/read-only: another session is not owed a follow-up" skip "${_DEP_OTHER_SESSION}" "${_dep_state}"
+# The follow-up: the hook runs once more, and passes on what ix says then.
+dep_run "dependents/read-only: the command after a report asks ix hook" hook "${_DEP_GIT_DIFF}" "${_dep_state}"
+assert_additional_context "dependents/read-only: the follow-up passes on ix's report" "Ix: you changed \`login\`"
+# That follow-up reported too, so one more is owed; this one finds nothing.
+dep_run "dependents/read-only: a report is followed up again" hook "${_DEP_GIT_DIFF}" "${_dep_state}" \
+  IX_MOCK_HOOK_FILE=/dev/null
+assert_empty "dependents/read-only: an empty follow-up prints nothing"
+dep_run "dependents/read-only: after a silent run, reads skip again" skip "${_DEP_GIT_DIFF}" "${_dep_state}"
+
+_dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
+dep_run "dependents/read-only: an Edit always asks ix hook" hook "${_DEP_EDIT}" "${_dep_state}"
+dep_run "dependents/read-only: a read after an Edit's report is a follow-up" hook "${_DEP_CAT_HEAD}" "${_dep_state}" \
+  IX_MOCK_HOOK_FILE=/dev/null
+dep_run "dependents/read-only: ...and only one" skip "${_DEP_CAT_HEAD}" "${_dep_state}"
+
+_dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
+dep_run "dependents/IX_BASH_EDIT_CLASSIFIER=off asks ix hook after git diff" hook "${_DEP_GIT_DIFF}" "${_dep_state}" \
+  IX_BASH_EDIT_CLASSIFIER=off
+run_hook ix-dependents.sh "${_DEP_GIT_DIFF}" IX_BASH_EDIT_CLASSIFIER=off
+assert_additional_context "dependents/IX_BASH_EDIT_CLASSIFIER=off reports as before" "Ix: you changed \`login\`"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Off by default: ix-bash.sh, ix-intercept.sh, ix-pre-edit.sh, ix-dependents.sh
+#
+# With no switch set, each one exits on its first lines: no ix call, no jq, no
+# library (which would create the plugin's state dir), no output, exit 0.
+# ═════════════════════════════════════════════════════════════════════════════
+section "off by default"
+
+# A jq that logs itself, first on PATH, so a call shows up in the call log.
+_OFF_BIN=$(mktemp -d -p "${TEST_TMPDIR}")
+_REAL_JQ=$(command -v jq)
+printf '#!/usr/bin/env bash\nprintf "jq %%s\\n" "$*" >> "${IX_MOCK_CALL_LOG:-/dev/null}"\nexec "%s" "$@"\n' \
+  "${_REAL_JQ}" > "${_OFF_BIN}/jq"
+chmod +x "${_OFF_BIN}/jq"
+
+# off_case <name> <hook.sh> <fixture> [KEY=VAL ...]
+off_case() {
+  local _name="$1" _hook="$2" _fx="$3"; shift 3
+  local _state; _state=$(mktemp -d -p "${TEST_TMPDIR}")
+  PATH="${_OFF_BIN}:${PATH}" run_hook "${_hook}" "${_fx}" \
+    TMPDIR="${_state}" IX_MOCK_CALL_LOG="${_state}/calls.log" "$@"
+  if [ "${_RC}" -ne 0 ]; then
+    fail "${_name}" "expected exit 0, got ${_RC}"
+  elif [ -n "${_OUT}" ]; then
+    fail "${_name}" "expected no output, got: ${_OUT:0:100}"
+  elif [ -s "${_state}/calls.log" ]; then
+    fail "${_name}" "expected no ix or jq call, got: $(tr '\n' ';' < "${_state}/calls.log")"
+  elif compgen -G "${_state}/ix-plugin-cache-*" >/dev/null; then
+    fail "${_name}" "the hook library was sourced (state dir created)"
+  else
+    pass "${_name}"
+  fi
+}
+
+_switches_default
+off_case "off/ix-bash.sh: shell grep" ix-bash.sh "${_BASH_GREP_FIXTURE}"
+off_case "off/ix-bash.sh: rg alternation" ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
+off_case "off/ix-bash.sh: not a search" ix-bash.sh "${_BASH_LS_FIXTURE}"
+off_case "off/ix-intercept.sh: Grep" ix-intercept.sh "${FX_IN}/grep_plain.json"
+off_case "off/ix-intercept.sh: Grep with block on" ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+off_case "off/ix-intercept.sh: Glob inventory" ix-intercept.sh "${FX_IN}/glob_path.json"
+off_case "off/ix-pre-edit.sh: high-risk Edit" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json"
+off_case "off/ix-pre-edit.sh: Write" ix-pre-edit.sh "${FX_IN}/write_new_file.json"
+off_case "off/ix-dependents.sh: edit through Bash" ix-dependents.sh "${_DEP_BASH_FIXTURE}"
+off_case "off/ix-dependents.sh: Edit" ix-dependents.sh "${FX_IN}/edit_high_risk.json"
+off_case "off/ix-dependents.sh: read-only Bash" ix-dependents.sh "${_DEP_GIT_DIFF}"
+# Only `on` turns a hook on; an explicit off (the old IX_EDIT_DEPENDENTS=off) stays off.
+off_case "off/IX_GREP_INTERCEPT=off: ix-bash.sh" ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_GREP_INTERCEPT=off
+off_case "off/IX_GREP_INTERCEPT=off: ix-intercept.sh" ix-intercept.sh "${FX_IN}/grep_plain.json" IX_GREP_INTERCEPT=off
+off_case "off/IX_PRE_EDIT_GATE=off" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_PRE_EDIT_GATE=off
+off_case "off/IX_EDIT_DEPENDENTS=off" ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_EDIT_DEPENDENTS=off
+# Each switch turns on its own hooks only.
+off_case "off/IX_EDIT_DEPENDENTS=on leaves ix-pre-edit.sh off" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_EDIT_DEPENDENTS=on
+off_case "off/IX_PRE_EDIT_GATE=on leaves ix-dependents.sh off" ix-dependents.sh "${FX_IN}/edit_high_risk.json" IX_PRE_EDIT_GATE=on
+off_case "off/IX_PRE_EDIT_GATE=on leaves ix-intercept.sh off" ix-intercept.sh "${FX_IN}/grep_plain.json" IX_PRE_EDIT_GATE=on
+
+# One switch on restores that hook as it was (the sections above run them all on).
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_GREP_INTERCEPT=on
+assert_additional_context "off/IX_GREP_INTERCEPT=on: ix-bash.sh speaks" "is defined at src/auth.ts"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_GREP_INTERCEPT=on
+assert_additional_context "off/IX_GREP_INTERCEPT=on: ix-intercept.sh speaks" "is defined at src/auth.ts"
+run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_PRE_EDIT_GATE=on
+assert_additional_context "off/IX_PRE_EDIT_GATE=on: ix-pre-edit.sh speaks" "HIGH-RISK EDIT"
+run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_EDIT_DEPENDENTS=on
+assert_additional_context "off/IX_EDIT_DEPENDENTS=on: ix-dependents.sh speaks" "Ix: you changed \`login\`"
+_switches_on
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ix_bash_may_write — which Bash command lines can only read
+# (hooks/lib/bash-write.sh; returns 1 for "reads", 0 for "may write")
+# ═════════════════════════════════════════════════════════════════════════════
+section "ix_bash_may_write"
+
+# bw_case <reads|writes> <command>
+bw_case() {
+  local _want="$1" _cmd="$2" _got
+  _got=$(bash -c 'source "$1/lib/bash-write.sh"; if ix_bash_may_write "$2"; then echo writes; else echo reads; fi' \
+    _ "${HOOKS_DIR}" "${_cmd}" 2>&1)
+  if [ "${_got}" = "${_want}" ]; then
+    pass "classify/${_want}: ${_cmd//$'\n'/\\n}"
+  else
+    fail "classify/${_want}: ${_cmd//$'\n'/\\n}" "got ${_got}"
+  fi
+}
+
+# Read-only commands, alone and combined.
+bw_case reads 'cat src/a.ts'
+bw_case reads 'ls -la src/'
+bw_case reads 'head -n 20 a.ts && tail -5 b.ts'
+bw_case reads 'wc -l a b; pwd; which ix'
+bw_case reads "echo 'x' | tr a b | sort | uniq -c"
+bw_case reads 'jq -r .name package.json'
+bw_case reads '[ -f x ] && echo yes || echo no'
+bw_case reads 'test -d src'
+bw_case reads 'ls src/ &'
+bw_case reads 'cd src && rg AuthService'
+bw_case reads '(cd src; grep -r AuthService .)'
+bw_case reads $'grep foo \\\n  src'
+bw_case reads $'ls\ncat a.txt'
+bw_case reads 'diff a.ts b.ts'
+bw_case reads 'stat -c %s a.ts'
+# Quoted text is data.
+bw_case reads 'grep -E "a|b" src/x.ts'
+bw_case reads "rg -n 'foo|bar; rm -rf /' hooks"
+bw_case reads 'echo "a > b && rm -rf /"'
+bw_case reads "cat 'file > name'"
+bw_case reads 'echo a\>b'
+bw_case reads 'grep "" file'
+# Redirects that write nothing.
+bw_case reads 'grep foo src 2>/dev/null'
+bw_case reads 'ls >/dev/null 2>&1'
+bw_case reads 'ls > /dev/null'
+bw_case reads 'ls 2>&1 >/dev/null'
+bw_case reads 'cat x 2>&1 | head -5'
+bw_case reads 'ls &>/dev/null'
+bw_case reads 'echo oops >&2'
+bw_case reads 'cat < input.txt'
+# Env assignments and wrappers.
+bw_case reads 'FOO=1 BAR=2 grep x y'
+bw_case reads 'time rg foo'
+bw_case reads 'nice -n 5 grep x .'
+bw_case reads 'command ls'
+bw_case reads "find . -name '*.ts' | xargs grep -l foo"
+bw_case reads 'find . -print0 | xargs -0 -n 1 wc -l'
+bw_case reads '! grep -q foo a.ts'
+bw_case reads '{ ls; cat a; }'
+# find, sed, awk without their write flags.
+bw_case reads "find src -type f -name '*.js'"
+bw_case reads 'fd -e ts auth'
+bw_case reads "sed -n '1,20p' a.ts"
+bw_case reads "sed -E 's/a/b/' a.ts"
+bw_case reads "awk '{print \$1}' a.txt"
+bw_case reads 'sort -u -k2 a.txt'
+# git, read-only subcommands.
+bw_case reads 'git status'
+bw_case reads 'git diff HEAD~1 -- src'
+bw_case reads 'git log --oneline -5'
+bw_case reads 'git show HEAD:src/a.ts'
+bw_case reads 'git blame -L 1,20 a.ts'
+bw_case reads 'git -C sub status --short'
+bw_case reads 'git --no-pager log -p'
+bw_case reads 'git -c color.ui=never diff'
+bw_case reads 'git ls-files | grep auth'
+bw_case reads 'git rev-parse --show-toplevel'
+bw_case reads 'git branch'
+bw_case reads 'git remote -v'
+
+# Unknown commands.
+bw_case writes ''
+bw_case writes 'npm test'
+bw_case writes 'make'
+bw_case writes 'rm -rf build'
+bw_case writes 'cd src && make'
+bw_case writes 'true && rm x'
+bw_case writes 'echo hi | python3 script.py'
+bw_case writes 'cat x | sh'
+bw_case writes 'bash -c "cat x"'
+bw_case writes 'env FOO=1 grep x'
+bw_case writes '$EDITOR file'
+bw_case writes 'if true; then ls; fi'
+bw_case writes 'ls | tee out.txt'
+bw_case writes 'xargs rm'
+bw_case writes 'find . | xargs -I {} cp {} /tmp'
+bw_case writes 'time make'
+bw_case writes './grep foo'
+# Redirects to a file.
+bw_case writes 'echo hi > out.txt'
+bw_case writes 'echo hi >> out.txt'
+bw_case writes 'echo hi>out.txt'
+bw_case writes 'cat a 2> err.log'
+bw_case writes 'ls &> out.log'
+bw_case writes 'ls >| out'
+bw_case writes 'ls >&out.log'
+bw_case writes 'grep -E "a|b" x > out'
+bw_case writes 'ls >/dev/null; echo x > y'
+bw_case writes 'ls <> file'
+# Heredocs and herestrings.
+bw_case writes $'cat <<EOF > x.ts\nexport const a = 1;\nEOF'
+bw_case writes $'python3 - <<\'EOF\'\nprint(1)\nEOF'
+bw_case writes $'cat <<EOF\nhello\nEOF'
+bw_case writes 'grep x <<< "$v"'
+# Substitutions run commands, even inside double quotes.
+bw_case writes 'echo "$(touch f)"'
+bw_case writes 'echo `touch f`'
+bw_case writes 'cat $(ls)'
+bw_case writes 'diff <(git show HEAD:a) a'
+bw_case writes 'ls > >(tee out)'
+bw_case writes "echo 'unterminated"
+# In-place and exec flags.
+bw_case writes "sed -i 's/a/b/' x.ts"
+bw_case writes "sed -i.bak 's/a/b/' x.ts"
+bw_case writes "sed --in-place=.bak 's/a/b/' x.ts"
+bw_case writes "sed -Ei 's/a/b/' x.ts"
+bw_case writes "find . -name '*.pyc' -delete"
+bw_case writes 'find . -name x -exec rm {} \;'
+bw_case writes 'find . -execdir touch {} +'
+bw_case writes 'find . -ok rm {} \;'
+bw_case writes 'find . -fprint out'
+bw_case writes 'find . -fls out'
+bw_case writes 'fd -e pyc -x rm'
+bw_case writes "awk -i inplace '{print}' f"
+bw_case writes 'sort -o out.txt in.txt'
+bw_case writes 'tree -o out.txt'
+# git, everything else.
+bw_case writes 'git commit -m "x"'
+bw_case writes 'git checkout -- a.ts'
+bw_case writes 'git stash'
+bw_case writes 'git branch -D x'
+bw_case writes 'git remote add o url'
+bw_case writes 'git apply p.diff'
+bw_case writes 'git'
+bw_case writes 'git status && git commit -am wip'
+# Multibyte text is data too; long lines up to the cap are parsed.
+bw_case reads 'grep -n "héllo|wörld → ok" src'
+bw_case writes 'echo "→" > out.txt'
+bw_case reads "cat $(printf 'src/f%03d.ts ' {1..70})"
+# Over the length cap: not parsed, so not trusted.
+bw_case writes "cat $(printf 'a%.0s' {1..1030})"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-briefing.sh — starting points for the task on a session's first prompt
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2173,6 +2473,27 @@ timed_case "timing/dependents off switch still logs" ix-dependents.sh "${_DEP_BA
   IX_EDIT_DEPENDENTS=off
 timed_case "timing/dependents no tool_name" ix-dependents.sh "${_EMPTY_FIXTURE}" 0 -
 timed_case "timing/dependents full path" ix-dependents.sh "${_DEP_BASH_FIXTURE}" 0 Bash
+# A read-only Bash command reads the payload, then skips ix hook; after a
+# report it is a follow-up run (TMPDIR shared, so the marker carries over).
+timed_case "timing/dependents read-only skip" ix-dependents.sh "${_DEP_GIT_DIFF}" 0 Bash
+_tm_dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
+_timing_run ix-dependents.sh "${_DEP_SED_I}" "" TMPDIR="${_tm_dep_state}"
+timed_case "timing/dependents read-only follow-up" ix-dependents.sh "${_DEP_GIT_DIFF}" 0 Bash \
+  TMPDIR="${_tm_dep_state}"
+if [ -n "${_OUT}" ]; then
+  pass "timing/dependents read-only follow-up really ran ix hook"
+else
+  fail "timing/dependents read-only follow-up really ran ix hook" "no report printed"
+fi
+
+# The defaults: each off path exits before stdin is read, so tool is "-".
+_switches_default
+timed_case "timing/bash off by default" ix-bash.sh "${_BASH_GREP_FIXTURE}" 0 -
+timed_case "timing/intercept Grep off by default" ix-intercept.sh "${FX_IN}/grep_plain.json" 0 -
+timed_case "timing/intercept Glob off by default" ix-intercept.sh "${FX_IN}/glob_path.json" 0 -
+timed_case "timing/pre-edit off by default" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" 0 -
+timed_case "timing/dependents off by default" ix-dependents.sh "${_DEP_BASH_FIXTURE}" 0 -
+_switches_on
 
 # ix-ingest.sh / ix-map.sh — the guarded automatic map
 _TM_EDIT_A=$(_tm_fixture "$(_am_edit "${_AM_REPO_A}" "${_AM_REPO_A}/src/app.ts")")

@@ -10,6 +10,10 @@
 #
 # Output is a CONCISE one-line summary — not raw JSON dumps.
 #
+# Off by default: it rarely names anything the grep itself does not find, and
+# costs an `ix locate` before the command runs. IX_GREP_INTERCEPT=on turns it
+# on (together with the Grep/Glob hint in ix-intercept.sh).
+#
 # Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, Bash still runs
 # Exit 0 + no stdout  → no-op, Bash runs normally
 
@@ -17,6 +21,9 @@
 [ -z "${IX_DEBUG_LOG:-}" ] || source "${BASH_SOURCE[0]%/*}/lib/timing.sh" ix-bash 2>/dev/null
 
 set -euo pipefail
+
+# Off: exit before reading stdin, jq or the library.
+[ "${IX_GREP_INTERCEPT:-off}" = "on" ] || exit 0
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')

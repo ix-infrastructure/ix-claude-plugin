@@ -8,6 +8,10 @@
 # significant dependents. High-risk edits get a clear signal before damage
 # is done.
 #
+# Off by default: the warning is a count and a risk word that names no file to
+# look at, and `ix impact` runs before every edit. IX_PRE_EDIT_GATE=on turns it
+# on, unchanged.
+#
 # Exit 0 + JSON stdout → hookSpecificOutput.additionalContext, tool still runs
 # Exit 0 + no stdout  → no-op, tool runs normally
 
@@ -15,6 +19,9 @@
 [ -z "${IX_DEBUG_LOG:-}" ] || source "${BASH_SOURCE[0]%/*}/lib/timing.sh" ix-pre-edit 2>/dev/null
 
 set -euo pipefail
+
+# Off: exit before reading stdin, jq or the library.
+[ "${IX_PRE_EDIT_GATE:-off}" = "on" ] || exit 0
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
