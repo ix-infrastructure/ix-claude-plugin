@@ -13,6 +13,12 @@ In ix-bench, Ix delivered this way -- starting points beside the prompt and depe
 
 Hook tests: 207 passing (151 in 3.2.0).
 
+Also cuts what the plugin adds to every model call. Claude Code lists each model-invocable skill and each agent, name and description, in the system prompt of every request, used or not.
+
+- **Skills are slash commands only.** All seven `skills/*/SKILL.md` set `disable-model-invocation: true`. You type `/ix-understand`, `/ix-debug` and the rest as before; Claude no longer starts one by itself, and their descriptions leave the per-call listing. CI fails a skill without the key.
+- **One agent, `ix-explorer`.** `ix-system-explorer`, `ix-bug-investigator`, `ix-safe-refactor-planner` and `ix-architecture-auditor` are removed. Their instructions are now role briefs beside the skills that used them (`skills/ix-understand/system-explorer-brief.md`, `skills/ix-debug/bug-investigator-brief.md`, `skills/ix-plan/refactor-planner-brief.md`, `skills/ix-architecture/architecture-auditor-brief.md`), and those skills launch `ix-explorer` with the brief, so `/ix-understand --medium|--deep`, `/ix-docs --full`, `/ix-debug`, `/ix-plan` and `/ix-architecture` delegate as before. Asking Claude for one of the removed agents by name no longer works: ask for `ix-explorer` or run the skill. `ix-explorer`'s description is one sentence, and CI fails on any other agent file.
+- Skill and agent descriptions listed per call: 1,749 characters before, 126 after (the skills' own descriptions are unchanged; they are just no longer listed).
+
 ## 3.2.0
 
 Makes the hooks cost what they are worth. Four changes, all measured against recorded Claude Code sessions on a real repo: the hooks were spending 1.8s median and 10s p90 per intercepted search, with 128 outright timeouts.

@@ -110,7 +110,7 @@ reachable. If none has been seen this session, all Pro steps are skipped gracefu
 | `ix decisions` | Returns recorded architectural decisions. Used by ix-investigate, ix-debug, ix-architecture to surface relevant past decisions. |
 | `ix bug list --format text` | Lists bug records (Ix Pro only). Used by ix-debug and ix-impact to check if any known bugs touch the blast radius. |
 | `ix bug create "<title>" --severity <level> --affects <symbol>` | Creates a new bug record. ix-debug suggests this at the end of an investigation for new bugs. |
-| `ix plans` | Lists active implementation plans. Used by ix-plan and ix-safe-refactor-planner to avoid duplicate work. |
+| `ix plans` | Lists active implementation plans. Used by ix-plan and its refactor-planner brief to avoid duplicate work. |
 | `ix plan create "<title>" --goal <id>` | Creates a new plan to track a change set. |
 | `ix goal list` | Lists development goals. Used by ix-plan to contextualize planned changes. |
 
@@ -378,6 +378,11 @@ All hooks use `ix_capture_async` to log failures locally. No data is sent extern
 
 ## Component 2 — Skills (User-Invocable Slash Commands)
 
+Skills are slash commands a person types. Every `SKILL.md` sets
+`disable-model-invocation: true`, so the model cannot start one by itself and
+Claude Code does not list their descriptions in every model call; CI fails a
+skill without it.
+
 Skills are markdown "reasoning protocol" files. Each defines multi-phase reasoning
 with explicit stop conditions, token budgets, and delegation logic. They are not
 CLI aliases — they infer intent and stop as soon as the question is answered.
@@ -430,13 +435,13 @@ Confidence check on subsystems results:
 subsystem map table, top classes/functions lists, and a 1-2 sentence health
 assessment. Suggests `--medium` or `--deep` for more detail.
 
-`--medium`: Launch a SINGLE `ix-system-explorer` agent regardless of system count.
+`--medium`: Launch a SINGLE `ix-explorer` agent with the system-explorer brief regardless of system count.
 Pass pre-computed Phase 1 results so the agent skips Step 1. Ask for breadth-first
 coverage (one level per subsystem). Present agent output directly.
 
 `--deep`:
 - Phase 2: Count significant systems (file count ≥ 10 OR confidence ≥ 0.5)
-  - ≤ 3 significant systems → single ix-system-explorer agent (Phase 3A)
+  - ≤ 3 significant systems → single ix-explorer agent, system-explorer brief (Phase 3A)
   - > 3 significant systems → parallel agents, one per system (Phase 3B)
 - Phase 3A (single agent): Full comprehensive architectural document, go wide AND deep.
   Covers subsystem internals, type system, data flows (ASCII), key components (up to 15),
@@ -579,7 +584,7 @@ output "SAFE — all targets low risk."
 Delegation gate: check for high complexity:
 1. Any target has dependents > 20?
 2. Any non-low-risk target's region has coupling > 5 (from `ix subsystems`)?
-If either → spawn `ix-safe-refactor-planner` agent with TARGETS + RISK_TABLE +
+If either → spawn `ix-explorer` with the refactor-planner brief and TARGETS + RISK_TABLE +
 SUBSYSTEMS pre-filled (agent skips its own Steps 1-3). Otherwise continue inline.
 
 **Phase 3 — Data flow (only if 2+ targets AND at least one is medium/high/critical):**
@@ -634,7 +639,7 @@ Stop if explanation makes the failure source obvious.
 - Inline path: single subsystem, confidence ≥ 0.7, entry point is NOT an orchestrator
   with more than 10 callees → continue to Phase 4.
 - Delegate path: confidence < 0.7, OR cross-subsystem, OR orchestrator with > 10
-  callees → spawn `ix-bug-investigator` agent with pre-computed Phase 1-2 context.
+  callees → spawn `ix-explorer` with the bug-investigator brief and pre-computed Phase 1-2 context.
 
 **Phase 4 — Trace (inline path):**
 `ix trace <entry-point> --downstream --format json`
@@ -690,7 +695,7 @@ Health gate — choose path:
 - Inline path (all must be true): smell count < 3, no god-module, no crosscut > 0.1
   → synthesize report inline using SUBSYSTEMS + SMELLS
 - Delegate path (any is true): smell count ≥ 3, OR god-module present, OR crosscut > 0.1
-  → spawn `ix-architecture-auditor` with SUBSYSTEMS + SMELLS pre-filled
+  → spawn `ix-explorer` with the architecture-auditor brief and SUBSYSTEMS + SMELLS pre-filled
     (agent skips its own Steps 1-4)
 
 **Phase 3 — Hotspot ranking (inline path only, conditional):**
@@ -775,11 +780,11 @@ Check if subsystem/rank data is already in context from a prior /ix-understand r
 in this session — if so, skip those Phase 1 commands.
 
 Step 1 — Per-system agents: from Phase 1 rank results, select top 5 systems by
-importance. For each, spawn one `ix-system-explorer` agent asking for: internal
+importance. For each, spawn one `ix-explorer` agent (system-explorer brief) asking for: internal
 module structure and responsibilities, most important/coupled components, main
 execution flows within the subsystem, outbound dependencies and shared interfaces.
 
-Step 2 — Cross-cutting agent: spawn one `ix-system-explorer` agent for cross-system
+Step 2 — Cross-cutting agent: spawn one `ix-explorer` agent (same brief) for cross-system
 concerns only — shared types, cross-system flows, infrastructure services, god-modules.
 Explicitly told NOT to explore individual subsystems.
 
@@ -810,10 +815,17 @@ graph data wins on conflict; failures noted in Coverage header, not retried.
 
 ---
 
-## Component 3 — Agents (Autonomous Sub-Agents)
+## Component 3 — Agent and Role Briefs (Autonomous Sub-Agents)
 
-Agents are spawned by skills for complex work that benefits from parallelism or
-isolation. Key contracts:
+The plugin ships one agent, `ix-explorer` (`agents/ix-explorer.md`). Claude Code
+lists every agent's description in every model call, so it has one short sentence
+and is the only agent; CI fails on any other file in `agents/`.
+
+Skills spawn `ix-explorer` (`subagent_type: "ix-memory:ix-explorer"`) for complex
+work that benefits from parallelism or isolation. The spawn prompt starts with a
+role brief: a markdown file beside the skill that the agent reads first and follows
+for the whole task. Briefs load only when a skill delegates, so they cost nothing
+per call. The four briefs below hold the role instructions. Key contracts:
 
 - Only the main conversation thread may spawn agents — no agent-spawning-agents
 - Always receive pre-computed orient data — never sent to repeat already-done work
@@ -824,7 +836,7 @@ isolation. Key contracts:
 
 ---
 
-### ix-system-explorer
+### Role brief: system explorer (`skills/ix-understand/system-explorer-brief.md`, used by ix-understand and ix-docs)
 
 **Purpose:** Builds a complete architectural mental model of a codebase or subsystem.
 Comparable to what a senior engineer would produce after a day of exploration.
@@ -883,7 +895,7 @@ connects to), risks with file paths.
 
 ---
 
-### ix-bug-investigator
+### Role brief: bug investigator (`skills/ix-debug/bug-investigator-brief.md`, used by ix-debug)
 
 **Purpose:** Root cause analysis — traces execution paths from a symptom to 1-3
 failure candidates with evidence.
@@ -936,7 +948,7 @@ what to verify next, uncertainty.
 
 ---
 
-### ix-architecture-auditor
+### Role brief: architecture auditor (`skills/ix-architecture/architecture-auditor-brief.md`, used by ix-architecture)
 
 **Purpose:** Full structural health audit. Identifies design issues, ranks them by
 severity, produces actionable improvements — entirely graph-based, never reads source.
@@ -986,7 +998,7 @@ Hotspots (central + poorly bounded components), What's Healthy, Priority Order
 
 ---
 
-### ix-safe-refactor-planner
+### Role brief: safe refactor planner (`skills/ix-plan/refactor-planner-brief.md`, used by ix-plan)
 
 **Purpose:** Risk-ordered change plan with safe edit boundaries for multi-file
 refactors. Never recommends a change without knowing its blast radius.
@@ -1050,10 +1062,13 @@ Red Flags, Safe Edit Boundaries, [Pro] Project context and Related Decisions.
 
 ---
 
-### ix-explorer
+### ix-explorer (the agent)
 
 **Purpose:** General-purpose graph exploration for open-ended questions about
 unfamiliar code, tracing data flows, or understanding how components connect.
+When a skill's prompt names a role brief, it reads the brief first and follows it;
+where the brief differs (depth, stop rules, output format), the brief wins. It uses
+pre-computed context from the prompt instead of re-running those steps.
 
 Always graph-first, never starts with Grep/Glob/Read. Stops when the question is
 answered — token efficiency over completeness.
@@ -1097,8 +1112,8 @@ complete no-op if Pro is not installed.
 |-------|---------|
 | `openBugs` | ix-debug (check for matching known bug before investigating), ix-impact (escalate risk if bugs touch blast radius) |
 | `recentDecisions` | ix-debug, ix-architecture, ix-investigate (surface relevant past decisions) |
-| `activePlans` | ix-plan, ix-safe-refactor-planner (avoid duplicate work, align to in-progress changes) |
-| `activeGoals` | ix-plan, ix-safe-refactor-planner (contextualize planned changes) |
+| `activePlans` | ix-plan and its refactor-planner brief (avoid duplicate work, align to in-progress changes) |
+| `activeGoals` | ix-plan and its refactor-planner brief (contextualize planned changes) |
 | `recentChanges` | ix-docs (surface recent changes context in documentation) |
 
 ---
@@ -1161,17 +1176,17 @@ skills/
   ix-understand/SKILL.md  Mental model skill — shallow/medium/deep modes
   ix-investigate/SKILL.md Symbol deep dive — graph-first, 1 read max
   ix-impact/SKILL.md      Blast radius — purely graph-based
-  ix-plan/SKILL.md        Multi-target change plan — delegates to planner agent
-  ix-debug/SKILL.md       Root cause analysis — delegates to investigator agent
-  ix-architecture/SKILL.md Design health — delegates to auditor agent
+  ix-plan/SKILL.md        Multi-target change plan — delegates with the planner brief
+  ix-debug/SKILL.md       Root cause analysis — delegates with the investigator brief
+  ix-architecture/SKILL.md Design health — delegates with the auditor brief
   ix-docs/SKILL.md        Documentation generation — parallel agent dispatch
+  ix-understand/system-explorer-brief.md        Architectural model (ix-understand, ix-docs)
+  ix-debug/bug-investigator-brief.md            Root cause analysis (ix-debug)
+  ix-plan/refactor-planner-brief.md             Refactor safety (ix-plan)
+  ix-architecture/architecture-auditor-brief.md Structural audit (ix-architecture)
 
 agents/
-  ix-explorer.md              General-purpose exploration (spawned directly)
-  ix-system-explorer.md       Architectural model (spawned by ix-understand, ix-docs)
-  ix-bug-investigator.md      Root cause analysis (spawned by ix-debug)
-  ix-safe-refactor-planner.md Refactor safety (spawned by ix-plan)
-  ix-architecture-auditor.md  Structural audit (spawned by ix-architecture)
+  ix-explorer.md          The one agent: graph-first exploration; skills hand it a role brief
 
 .claude-plugin/
   plugin.json             Plugin manifest: name=ix-memory, version=3.2.0

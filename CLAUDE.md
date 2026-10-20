@@ -27,12 +27,9 @@ skills/
   ix-debug/                  bug investigation
   ix-architecture/           design health audit
   ix-docs/                   narrative-first documentation
+  */*-brief.md               role briefs a skill hands to ix-explorer
 agents/
-  ix-explorer.md
-  ix-system-explorer.md
-  ix-bug-investigator.md
-  ix-safe-refactor-planner.md
-  ix-architecture-auditor.md
+  ix-explorer.md             the one agent
 hooks/
   hooks.json                 active Claude Code hook registry
   ix-briefing.sh             prompt-time session context
@@ -86,17 +83,27 @@ When adding or changing a skill:
 2. Keep universal Ix doctrine in `skills/shared.md`, not here.
 3. Add the skill to the `skills/shared.md` table if it is user-facing.
 4. Check whether docs or marketplace metadata mention the skill.
+5. Keep `disable-model-invocation: true` in its frontmatter. Skills are slash
+   commands a person types; a model-visible skill's description is sent with
+   every model call. CI fails a skill without it.
 
 ## Agents
-The repo ships these agent specs:
-- `ix-explorer` — general open-ended exploration
-- `ix-system-explorer` — architecture and subsystem mental models
-- `ix-bug-investigator` — root-cause analysis from symptoms
-- `ix-safe-refactor-planner` — safe sequencing for risky refactors
-- `ix-architecture-auditor` — structural health analysis and improvements
+The repo ships one agent, `ix-explorer` (graph-first exploration). Every
+agent's description is sent with every model call, so keep it to one short
+sentence and do not add agents lightly; CI fails on any agent besides
+`ix-explorer`.
 
-Keep agent prompts complementary to the skills. Skills decide when to delegate;
-agents do the heavier exploration or synthesis once invoked.
+A skill that delegates launches `ix-explorer` and starts its prompt with a role
+brief, a file beside the skill that the agent reads first:
+- `skills/ix-understand/system-explorer-brief.md` — architecture and subsystem
+  mental models (also used by `ix-docs`)
+- `skills/ix-debug/bug-investigator-brief.md` — root-cause analysis from symptoms
+- `skills/ix-plan/refactor-planner-brief.md` — safe sequencing for risky refactors
+- `skills/ix-architecture/architecture-auditor-brief.md` — structural health
+  analysis and improvements
+
+Keep briefs complementary to the skills. Skills decide when to delegate; the
+agent does the heavier exploration or synthesis once invoked.
 
 ## Contributing Notes
 Hook work:

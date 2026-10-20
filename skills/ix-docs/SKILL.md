@@ -2,6 +2,7 @@
 name: ix-docs
 description: Generate narrative-first, importance-weighted documentation for a repo, system, or subsystem with a selective reference layer. Use --full for deeper module/class/method coverage.
 argument-hint: <target> [--full] [--style narrative|reference|hybrid] [--split] [--single-doc] [--out <path>] [--save [path]]
+disable-model-invocation: true
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -200,13 +201,13 @@ If ambiguous, resolve it before proceeding.
 
 **Phase 1 reuse:** Before running Phase 1 commands, check whether subsystem and rank data is already present in context from a prior `/ix-understand` run in this session. If `ix subsystems` results and rank results are already available, skip those Phase 1 commands and use the cached data directly — do not re-run them.
 
-**Step 1 — Per-system agents:** From the Phase 1 rank results, select the top systems by importance (cap at 5). For each, spawn one `ix-system-explorer` agent in the background:
+**Step 1 — Per-system agents:** From the Phase 1 rank results, select the top systems by importance (cap at 5). For each, spawn one `ix-explorer` agent (Agent tool, `subagent_type: "ix-memory:ix-explorer"`) in the background, with the system-explorer role brief (in the `ix-understand` skill directory, beside this one) at the start of its prompt:
 
-> Task template: *"Build a complete architectural mental model of `$SYSTEM` within `$TARGET`. Focus on: (1) internal module structure and responsibilities, (2) the most important and most-coupled components, (3) main execution flows within this subsystem, (4) outbound dependencies and shared interfaces with other subsystems. Return structured findings with: a one-paragraph subsystem summary, top 5 important modules with roles, key internal flows, and coupling risks."*
+> Task template: *"Role brief: Read `${CLAUDE_SKILL_DIR}/../ix-understand/system-explorer-brief.md` before anything else and follow it. Build a complete architectural mental model of `$SYSTEM` within `$TARGET`. Focus on: (1) internal module structure and responsibilities, (2) the most important and most-coupled components, (3) main execution flows within this subsystem, (4) outbound dependencies and shared interfaces with other subsystems. Return structured findings with: a one-paragraph subsystem summary, top 5 important modules with roles, key internal flows, and coupling risks."*
 
-**Step 2 — Cross-cutting agent:** Immediately after spawning the per-system agents, spawn one additional `ix-system-explorer` agent for cross-system concerns:
+**Step 2 — Cross-cutting agent:** Immediately after spawning the per-system agents, spawn one additional `ix-explorer` agent, with the same role brief, for cross-system concerns:
 
-> Task: *"In the `$TARGET` codebase, identify only what crosses subsystem boundaries: (1) shared types, base classes, and utilities used across multiple subsystems, (2) cross-system execution flows and handoff points, (3) infrastructure or platform services that multiple systems depend on, (4) god-modules or highly-central components visible from the dependency graph. Do NOT explore individual subsystems in depth — focus exclusively on cross-cutting structure. Return structured findings."*
+> Task: *"Role brief: Read `${CLAUDE_SKILL_DIR}/../ix-understand/system-explorer-brief.md` before anything else and follow it. In the `$TARGET` codebase, identify only what crosses subsystem boundaries: (1) shared types, base classes, and utilities used across multiple subsystems, (2) cross-system execution flows and handoff points, (3) infrastructure or platform services that multiple systems depend on, (4) god-modules or highly-central components visible from the dependency graph. Do NOT explore individual subsystems in depth — focus exclusively on cross-cutting structure. Return structured findings."*
 
 **Do not wait** for any agent before starting Phase 2. Continue running Phase 2 commands while all agents work.
 

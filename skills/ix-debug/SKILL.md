@@ -2,6 +2,7 @@
 name: ix-debug
 description: Root cause analysis — trace execution path to a failure, narrow candidates, read minimal source only at suspected failure points.
 argument-hint: <error message, symptom description, or name of failing function> [--save [path]]
+disable-model-invocation: true
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -61,10 +62,12 @@ Extract: role, callers, callees, confidence. Identify whether this is:
 Use the Phase 1–2 results to choose the path:
 
 - **Inline path (simple bug):** the likely failure is still within a single subsystem, confidence is `>= 0.7`, and the entry point is not an orchestrator with more than 10 callees → continue to Phase 4.
-- **Delegate path (complex bug):** confidence is `< 0.7`, OR the entry point is an orchestrator with more than 10 callees → use the Agent tool with `subagent_type: "ix-memory:ix-bug-investigator"` and pass the pre-computed context below.
+- **Delegate path (complex bug):** confidence is `< 0.7`, OR the entry point is an orchestrator with more than 10 callees → use the Agent tool with `subagent_type: "ix-memory:ix-explorer"` and pass the bug-investigator role brief (in this skill's base directory) and the pre-computed context below.
 
 **You MUST pass pre-computed context so the agent skips redundant work.** Launch the agent with:
 
+> **Role brief:** Read `${CLAUDE_SKILL_DIR}/bug-investigator-brief.md` before anything else and follow it.
+>
 > Investigate: $ARGUMENTS
 >
 > **Pre-computed context (skip Steps 1–2):**
