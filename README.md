@@ -15,7 +15,7 @@ Claude + Ix = reasoning engine + persistent code knowledge graph. Skills are cog
 
 Restart Claude Code after installing.
 
-After install, Claude is taught to prefer Ix for structural questions, hooks automatically front-run common search/edit paths with Ix context, and Claude appends a short final `Ix` section when hooks materially helped on that turn.
+After install, Claude is taught to prefer Ix for structural questions, and hooks automatically front-run common search/edit paths with Ix context. Set `IX_ANNOTATE_CHANNEL=modelSuffix` or `both` to request a short final `Ix` section when hooks helped.
 
 ## Requirements
 
@@ -65,6 +65,7 @@ Autonomous multi-step agents for complex tasks:
 
 | Trigger | Hook | Effect |
 |---------|------|--------|
+| Session starts, resumes, clears or compacts | `SessionStart` → `ix-session-start.sh` | Injects an ix trigger and recovery guide under 600 bytes, without querying the backend |
 | User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**. On a session's first task-sized prompt, also the files Ix trusts as starting points for it (`ix context --from-issue - --lean`; `IX_ISSUE_START=off` to disable). Can also ask Claude to append a short final `Ix` section (`IX_ANNOTATE_CHANNEL`) |
 | Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Grep naming one definition: where it is defined and its callers at their call sites (`ix locate` + `ix callers`), else silent. Glob: `ix inventory` |
 | Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts the pattern; if it names one definition, adds where it is defined and its callers, else silent |

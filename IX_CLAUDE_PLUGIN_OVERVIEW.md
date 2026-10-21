@@ -110,7 +110,7 @@ reachable. If none has been seen this session, all Pro steps are skipped gracefu
 | `ix decisions` | Returns recorded architectural decisions. Used by ix-investigate, ix-debug, ix-architecture to surface relevant past decisions. |
 | `ix bug list --format text` | Lists bug records (Ix Pro only). Used by ix-debug and ix-impact to check if any known bugs touch the blast radius. |
 | `ix bug create "<title>" --severity <level> --affects <symbol>` | Creates a new bug record. ix-debug suggests this at the end of an investigation for new bugs. |
-| `ix plans` | Lists active implementation plans. Used by ix-plan and ix-safe-refactor-planner to avoid duplicate work. |
+| `ix plan list` | Lists active implementation plans. Used by ix-plan and ix-safe-refactor-planner to avoid duplicate work. |
 | `ix plan create "<title>" --goal <id>` | Creates a new plan to track a change set. |
 | `ix goal list` | Lists development goals. Used by ix-plan to contextualize planned changes. |
 
@@ -139,6 +139,7 @@ All hooks:
 
 Hook registry (`hooks/hooks.json`):
 ```
+SessionStart                → ix-session-start.sh (5s timeout; also after compact)
 UserPromptSubmit            → ix-briefing.sh      (15s timeout)
 PreToolUse(Grep|Glob)       → ix-intercept.sh     (10s timeout)
 PreToolUse(Bash)            → ix-bash.sh          (10s timeout)
@@ -383,7 +384,7 @@ with explicit stop conditions, token budgets, and delegation logic. They are not
 CLI aliases — they infer intent and stop as soon as the question is answered.
 
 **Universal rules across all skills:**
-1. Graph-first: `ix locate → ix explain → ix trace/callers/callees → ix impact → ix read`
+1. Graph-first: `ix locate` → `ix explain` → `ix trace` / `ix callers` / `ix callees` → `ix impact` → `ix read`
 2. Stop early: evaluate "can I answer now?" at each phase boundary
 3. Scale depth with risk: low-risk targets get fewer queries
 4. No raw JSON: produce ranked findings + reasoning + confidence + next step
@@ -592,7 +593,7 @@ Identifies symbols that depend on multiple targets — highest testing priority.
 
 **Phase 5 — Project context [Pro]:**
 ```
-ix plans --format json
+ix plan list --format json
 ix goal list --format json
 ```
 Cross-reference activePlans to avoid duplicate work. Note which activeGoal this serves.
@@ -1034,7 +1035,7 @@ crosses a subsystem boundary (highest risk), whether tests exist in caller list.
 **Step 7 — Pro context [Pro]:**
 ```
 ix decisions --format json
-ix plans --format json
+ix plan list --format json
 ```
 Surface decisions that constrain the refactor. Align to existing plans.
 

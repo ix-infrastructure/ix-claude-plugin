@@ -4,7 +4,7 @@
 # tests/test_hooks.sh — Integration test harness for ix Claude plugin hooks.
 #
 # Usage: bash tests/test_hooks.sh
-# Requires: bash, jq
+# Requires: bash, jq, python3
 # Exit code: 0 if all tests pass, 1 if any fail.
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -431,7 +431,7 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"/repo/README.md","old_str
 section "ix-briefing.sh"
 
 # By default the briefing is the whole payload: the attribution instruction is
-# ~0.9 KB of every prompt, spent so the model can describe work the person just
+# opt-in on each prompt, so the model can describe work the person just
 # watched happen. IX_ANNOTATE_CHANNEL=modelSuffix (or both) asks for it back.
 run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 if [ "${_RC}" -ne 0 ]; then
@@ -444,7 +444,7 @@ else
   _ctx=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
   if [[ "${_ctx}" != *"[ix] Session briefing:"* ]]; then
     fail "briefing/default injects the session briefing" "missing session briefing in additionalContext"
-  elif [[ "${_ctx}" == *'must end your response with exactly this final structure and nothing after it:'* ]]; then
+  elif [[ "${_ctx}" == *'[ix meta]'* ]]; then
     fail "briefing/default injects the session briefing" "model-authored attribution instruction present by default"
   else
     pass "briefing/default injects the session briefing"
@@ -464,9 +464,9 @@ _OUT=$(env \
 _HOOK_EVENT="UserPromptSubmit"
 check_host_schema "ix-briefing.sh IX_ANNOTATE_CHANNEL=modelSuffix"
 _ctx=$(echo "${_OUT}" | jq -r 'select(.hookSpecificOutput.hookEventName == "UserPromptSubmit") | .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
-if [[ "${_ctx}" != *'must end your response with exactly this final structure and nothing after it:'* ]]; then
+if [[ "${_ctx}" != *'[ix meta]'* ]]; then
   fail "briefing/modelSuffix still asks for the Ix section" "missing model-authored Ix section instruction"
-elif [[ "${_ctx}" != *'Use 1 or 2 markdown bullets only'* ]]; then
+elif [[ "${_ctx}" != *'1 or 2 short factual markdown bullets'* ]]; then
   fail "briefing/modelSuffix still asks for the Ix section" "missing strict Ix bullet-format rule"
 else
   pass "briefing/modelSuffix still asks for the Ix section"
@@ -2269,6 +2269,13 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
+section "session teaching and CLI contract validator"
+if python3 -m unittest discover -s "${TESTS_DIR}" -p 'test_*.py'; then
+  pass "teaching and CLI contract regression tests"
+else
+  fail "teaching and CLI contract regression tests" "Python regression tests failed"
+fi
+
 printf '\n══════════════════════════════════════════════════════\n'
 printf 'Results: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 printf '══════════════════════════════════════════════════════\n'

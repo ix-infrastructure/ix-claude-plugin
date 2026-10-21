@@ -94,7 +94,7 @@ Use only to understand what a target *does* if ix explain was insufficient. Skip
 Before finalizing the plan, check for existing decisions or plans that constrain this refactor:
 ```bash
 ix decisions --format text
-ix plans --format text
+ix plan list --format text
 ```
 
 - Surface any decisions that apply to the targets — these may restrict how or whether certain changes are safe

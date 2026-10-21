@@ -19,7 +19,6 @@ teaching, hook-driven context injection, and higher-level reasoning skills.
 ```text
 skills/
   shared.md                  canonical install-time Ix model
-  ix-help/                   router skill
   ix-understand/             architecture mental model
   ix-investigate/            symbol deep dive
   ix-impact/                 pre-edit blast radius
@@ -54,8 +53,9 @@ tests/
   plugin.json                plugin manifest
   marketplace.json           marketplace metadata
 ```
-Active hooks are defined by `hooks/hooks.json`: briefing + annotate on prompt
-submit, intercept for `Grep|Glob`, bash interception for `Bash`, pre-edit
+Active hooks are defined by `hooks/hooks.json`: teaching on session start
+(including compact), briefing on prompt submit, intercept for `Grep|Glob`,
+bash interception for `Bash`, pre-edit
 warnings for edits, ingest on post-edit, and full map refresh on `Stop`.
 
 ## Skills
@@ -66,7 +66,7 @@ Required frontmatter:
 ```markdown
 ---
 name: ix-<name>
-description: <one-line description>
+description: Use when <concrete trigger and purpose>
 argument-hint: <placeholder shown in slash-command UI>
 ---
 ```
@@ -109,6 +109,13 @@ Testing:
 - Run `bash tests/test_hooks.sh` after hook changes.
 - The harness uses `tests/mock-ix.sh` and fixture JSON to validate behavior without a live ix server.
 - `bash tests/test_real_ix.sh` runs the hooks against the real `ix` first on PATH, with no backend; CI pins the release. It fails when a hook uses a flag that CLI lacks.
+- The same real-CLI suite validates commands and flags in shipped hooks, skills,
+  agents and current docs via `python3 tests/check_cli_contract.py`. Historical
+  changelog and task records are excluded. `tests/test_hooks.sh` also runs the
+  teaching and validator regression tests with Python's standard library.
+  OSS Pro stubs cannot declare Pro flags: the checker returns 2 for missing
+  definitions, which the OSS suite reports as unverified. Run the checker with
+  a Pro-enabled CLI for complete coverage; unknown commands/flags return 1.
 - Prefer targeted fixture additions over broad test rewrites when adjusting one hook path.
 
 Manual checks:

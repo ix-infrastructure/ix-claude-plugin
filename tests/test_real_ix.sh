@@ -24,7 +24,8 @@
 # flag this ix does not have turns the suite red.
 #
 # Usage: bash tests/test_real_ix.sh
-# Requires: bash, jq, git, timeout, a real `ix` on PATH (and ripgrep for it)
+# Also validates all shipped CLI guidance against this CLI's --help definitions.
+# Requires: bash, jq, git, timeout, python3, a real `ix` (and ripgrep for it)
 # Never set IX_ENDPOINT to a live backend: this suite pins it to a closed port.
 
 set -uo pipefail
@@ -38,7 +39,7 @@ pass() { printf 'PASS  %s\n' "$1"; PASS_COUNT=$(( PASS_COUNT + 1 )); }
 fail() { printf 'FAIL  %s — %s\n' "$1" "$2"; FAIL_COUNT=$(( FAIL_COUNT + 1 )); }
 section() { printf '\n── %s ─────────────────────────────────────────────\n' "$1"; }
 
-for _bin in ix jq git timeout; do
+for _bin in ix jq git timeout python3; do
   command -v "$_bin" >/dev/null 2>&1 || { echo "missing required tool: $_bin" >&2; exit 2; }
 done
 if [ "$(command -v ix)" = "${TESTS_DIR}/ix" ]; then
@@ -57,6 +58,15 @@ export IX_ENDPOINT="http://127.0.0.1:1"
 export IX_NO_UPDATE_CHECK=1
 unset IX_ANNOTATE_MODE IX_ANNOTATE_CHANNEL IX_HOOK_OUTPUT_STYLE IX_BLOCK_ON_HIGH_CONFIDENCE
 mkdir -p "$HOME" "$TMPDIR"
+
+section "shipped command and flag definitions"
+python3 "${TESTS_DIR}/check_cli_contract.py"
+_contract_status=$?
+if [ "$_contract_status" -eq 2 ]; then
+  echo "UNVERIFIED: Pro command flags need a Pro-enabled CLI; available definitions were checked"
+elif [ "$_contract_status" -ne 0 ]; then
+  exit "$_contract_status"
+fi
 
 IX_VERSION=$(ix --version 2>/dev/null | head -1)
 echo "ix:      $(command -v ix)"
@@ -165,6 +175,18 @@ EOF
   local _probe
   _probe=$(cd "$PROJECT" && timeout 20 ix locate computeTotal --format json 2>&1 | head -c 240)
   echo "  ix locate here → ${_probe//$'\n'/ }"
+
+  # SessionStart teaching works even when the graph cannot answer, including
+  # after compact. It performs no ix query of its own.
+  if run_hook "[${_name}] compact teaching" ix-session-start.sh SessionStart \
+       '{"hook_event_name":"SessionStart","source":"compact"}'; then
+    if printf '%s' "$OUT" | jq -e \
+         '.hookSpecificOutput.additionalContext | contains("before grep")' >/dev/null; then
+      pass "[${_name}] compact teaching is available without a graph"
+    else
+      fail "[${_name}] compact teaching" "missing triggers"
+    fi
+  fi
 
   # 1. UserPromptSubmit: the Pro probe runs the real `ix briefing`. On an OSS
   #    install that is a stub that exits 1, so no briefing may be injected.

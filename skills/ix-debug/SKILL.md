@@ -1,6 +1,6 @@
 ---
 name: ix-debug
-description: Root cause analysis — trace execution path to a failure, narrow candidates, read minimal source only at suspected failure points.
+description: Use when investigating unexpected behavior or a failure, to trace execution and narrow root causes.
 argument-hint: <error message, symptom description, or name of failing function> [--save [path]]
 ---
 

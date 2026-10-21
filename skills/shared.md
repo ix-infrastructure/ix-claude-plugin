@@ -40,7 +40,7 @@ Required flags:
 - Pass `--format llm` for token-optimized output you read directly (compact
   `key=value` records, typically 2-4x smaller than json). Use `--format json`
   only when you need to machine-parse the result (e.g. extract a field with a
-  tool). On **Pro** commands (`briefing`, `bug`, `decisions`, `plans`, `goal`, …)
+  tool). On **Pro** commands (`briefing`, `bug`, `decisions`, `plan`, `goal`, …)
   use `--format text`: Pro declares only `text|json`, so `llm` there silently
   renders text anyway, and json is the expensive one.
 
@@ -61,12 +61,12 @@ when it did not.
 | Tier | Commands |
 |---|---|
 | **Standard** | `subsystems`, `overview`, `locate`, `search`, `explain`, `read`, `trace`, `callers`, `callees`, `contains`, `depends`, `impact`, `inventory`, `text`, `smells`, `rank`, `stats`, `status`, `map`, `history`, `diff`, `imports`, `imported-by`, `patches`, `context`, `savings`, `doctor` |
-| **Pro only** | `briefing`, `bug`, `decide`, `decisions`, `goal`, `plan`, `plans`, `task`, `tasks`, `truth`, `workflow` |
+| **Pro only** | `briefing`, `bug`, `decide`, `decisions`, `goal`, `plan`, `task`, `tasks`, `truth`, `workflow` |
 
 The Pro row is `PRO_COMMANDS` in the CLI's `register/oss.ts` **minus `goals`**,
 which is listed there but implemented nowhere: Ix-pro#103 removed the duplicate
 top-level `goals` command, and `Ix-pro@main` registers `goal` and not `goals`.
-The OSS stub list was never updated, so `ix goals` on an OSS install answers
+The OSS stub list was never updated, so `goals` on an OSS install answers
 "requires Ix Pro" for a command Pro does not have either. Use `ix goal list`
 (#31 fixes the two skills that called it).
 
@@ -107,7 +107,7 @@ real either way (`decisions`: json 1,144 B → text 446 B).
 | Find what a function calls | `ix callees <symbol> --limit 15 --format llm` |
 | Find what imports a module | `ix imported-by <symbol> --format llm` |
 | Check what a file exports | `ix overview <path> --format llm` |
-| Not sure which to use | `/ix-help <task description>` |
+| Not sure which to use | Choose the matching trigger in this table |
 
 ---
 
@@ -151,7 +151,17 @@ Do not assume the symbol does not exist. The graph may not cover it. Fall back t
 If recent edits have not been mapped (e.g., new files added, large refactor), run `ix map --silent` before relying on structural data. Staleness is most likely after bulk file changes.
 
 **When ix returns an error:**
-Exit the Ix query path gracefully. Do not surface raw error output. Fall back to native tools and note that the ix query failed.
+- Exit codes: 2 = ambiguous (`ambiguous_target`, candidates listed), 3 = not
+  found (`unresolved_target`), 4 = workspace not mapped (`workspace_not_mapped`),
+  1 = a real error. Older ix CLIs exit 1 for all of these, so go by the slug.
+- On `ambiguous_target` (exit 2, or 1 with candidates on older ix), use the
+  candidates printed to re-run the same query with `--pick N`, `--path <file>`
+  or `--kind <kind>`. Do not abandon the graph after an ambiguous match.
+- On `unresolved_target` (exit 3), the symbol may be new (not yet indexed) or
+  misspelled. Try `ix search <partial-name>` with a partial name first, then
+  fall back to `git grep` for symbols you just wrote.
+- For other failures (such as an unreachable backend), use native tools and
+  briefly note that the query failed; do not dump raw errors into the response.
 
 ---
 
@@ -226,4 +236,3 @@ Then use `ix read AuthService` only if the structural data is insufficient.
 | [ix-debug](ix-debug/SKILL.md) | Root cause analysis from a symptom |
 | [ix-architecture](ix-architecture/SKILL.md) | Design health audit |
 | [ix-docs](ix-docs/SKILL.md) | Narrative-first documentation from graph |
-| [ix-help](ix-help/SKILL.md) | Route to the right skill or command |

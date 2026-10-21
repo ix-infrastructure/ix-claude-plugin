@@ -1,6 +1,6 @@
 ---
 name: ix-investigate
-description: Deep dive into a symbol, feature, or bug. Graph-first, minimal code reads, early stopping when sufficient evidence found.
+description: Use when you need to understand a specific symbol or feature, using graph queries before source reads.
 argument-hint: <symbol, function name, or "how does X work?"> [--save [path]]
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: ix-understand
-description: Build a detailed architectural mental model of a system, subsystem, or the whole repo. Graph-first, source reads only when needed for data flow or key patterns.
+description: Use when you need an architectural mental model of a system, subsystem or repository.
 argument-hint: [target] [--shallow (default) | --medium | --deep] [--save [path]]
 ---
 
