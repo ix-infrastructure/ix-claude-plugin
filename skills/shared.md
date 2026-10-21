@@ -151,10 +151,13 @@ Do not assume the symbol does not exist. The graph may not cover it. Fall back t
 If recent edits have not been mapped (e.g., new files added, large refactor), run `ix map --silent` before relying on structural data. Staleness is most likely after bulk file changes.
 
 **When ix returns an error:**
-- On exit 1 with candidates or `ambiguous_target`, use the candidates printed
-  to re-run the same query with `--pick N`, `--path <file>` or `--kind <kind>`.
-  Do not abandon the graph after an ambiguous match.
-- On `unresolved_target`, the symbol may be new (not yet indexed) or
+- Exit codes: 2 = ambiguous (`ambiguous_target`, candidates listed), 3 = not
+  found (`unresolved_target`), 4 = workspace not mapped (`workspace_not_mapped`),
+  1 = a real error. Older ix CLIs exit 1 for all of these, so go by the slug.
+- On `ambiguous_target` (exit 2, or 1 with candidates on older ix), use the
+  candidates printed to re-run the same query with `--pick N`, `--path <file>`
+  or `--kind <kind>`. Do not abandon the graph after an ambiguous match.
+- On `unresolved_target` (exit 3), the symbol may be new (not yet indexed) or
   misspelled. Try `ix search <partial-name>` with a partial name first, then
   fall back to `git grep` for symbols you just wrote.
 - For other failures (such as an unreachable backend), use native tools and
