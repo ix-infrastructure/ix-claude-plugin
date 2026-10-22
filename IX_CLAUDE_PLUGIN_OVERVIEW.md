@@ -176,7 +176,8 @@ Fires before any Grep or Glob tool call. Runs graph queries in parallel and inje
 a one-line context summary so Claude has graph-aware knowledge before the native
 tool runs. The native tool still runs afterward.
 
-**Off by default** (Grep and Glob alike): `IX_GREP_INTERCEPT=on` turns it on.
+**Off by default** (Grep and Glob alike): `IX_GREP_INTERCEPT=on` turns it on,
+and so does `IX_BLOCK_ON_HIGH_CONFIDENCE=1`.
 Off, it exits on its first lines: no ix call, no jq, nothing printed.
 
 **No-op cases:**

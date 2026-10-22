@@ -22,7 +22,8 @@
 #   - in-place flags: `sed -i`/`--in-place`, `awk -i inplace`, `sort -o`,
 #     `tree -o`, `less -o`, `file -C`, `git diff/log --output`; output operands
 #     (`uniq in out`, `xxd in out`); scripts that write or run commands (sed
-#     `w`/`W`/`e`/`-f`, awk `>`/`|`/`system`/`-f`, `rg --pre`, `git --ext-diff`);
+#     `w`/`W`/`e`/`-f`, awk `>`/`|`/`system`/`-f`, `rg --pre`, `git --ext-diff`,
+#     `git -c` other than display settings, `git --exec-path=`);
 #     `find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `fd -x/-X/--exec*`
 # Quoted text is data, not syntax (`grep -E "a|b"` is one command). The line
 # splits on `&&`, `||`, `|`, `|&`, `;`, `&`, newlines and subshell parens; each
@@ -42,7 +43,8 @@ ix_bash_may_write() {
   local _n=${#_s} _i=0 _c _q="" _w="" _hw=0 _redir=0 _j
   local -a _words=()
   # Runs of characters with no meaning in their quoting state, taken in one step.
-  local _re_sed_write='(^|[^A-Za-z])([wW][[:space:]]+[^[:space:]]|e([[:space:];}]|$))'
+  # sed commands w/W/e, and the s command's w and e flags (`s/a/b/gw out`).
+  local _re_sed_write='(^|[^A-Za-z])([wW][[:space:]]+[^[:space:]]|e([[:space:];}]|$))|/[gpiImM0-9]*(w[[:space:]]|e([[:space:];}]|$))'
   local _re_plain="^[^[:space:]'\"\\\`\$;&|<>()]+" _re_sq="^[^']+" _re_dq="^[^\"\\\`\$]+"
   [ "$_n" -gt 0 ] && [ "$_n" -le 1024 ] || return 0
 
@@ -220,7 +222,7 @@ _ix_bw_command_reads() {
       done
       return 0 ;;
     tree)
-      for _a in ${_args[@]+"${_args[@]}"}; do [ "$_a" = "-o" ] && return 1; done
+      for _a in ${_args[@]+"${_args[@]}"}; do [[ "$_a" == -o* ]] && return 1; done
       return 0 ;;
     find)
       for _a in ${_args[@]+"${_args[@]}"}; do
@@ -243,7 +245,7 @@ _ix_bw_command_reads() {
     # The program can write: `print > "f"`, `print | "cmd"`, `system()`.
     awk|gawk)
       for _a in ${_args[@]+"${_args[@]}"}; do
-        case "$_a" in *inplace*|*'>'*|*'|'*|*system*|-f|--file*) return 1 ;; esac
+        case "$_a" in *inplace*|*'>'*|*'|'*|*system*|-f*|--file*) return 1 ;; esac
       done
       return 0 ;;
     git) _ix_bw_git_reads ;;
@@ -264,7 +266,16 @@ _ix_bw_git_reads() {
   local _g=0 _gm=${#_args[@]}
   while [ "$_g" -lt "$_gm" ]; do
     case "${_args[_g]}" in
-      -C|-c|--git-dir|--work-tree|--namespace) _g=$(( _g + 2 )) ;;
+      -C|--git-dir|--work-tree|--namespace) _g=$(( _g + 2 )) ;;
+      # A config value can name a program to run (diff.external, core.pager,
+      # an alias); only display settings pass.
+      -c)
+        case "${_args[_g+1]-}" in
+          color.*|core.quotepath=*|log.*|diff.noprefix=*|diff.renames=*|diff.algorithm=*) ;;
+          *) return 1 ;;
+        esac
+        _g=$(( _g + 2 )) ;;
+      --exec-path=*|--config-env*) return 1 ;;
       -*) _g=$(( _g + 1 )) ;;
       *) break ;;
     esac

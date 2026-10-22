@@ -1353,7 +1353,7 @@ off_case "off/ix-bash.sh: shell grep" ix-bash.sh "${_BASH_GREP_FIXTURE}"
 off_case "off/ix-bash.sh: rg alternation" ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
 off_case "off/ix-bash.sh: not a search" ix-bash.sh "${_BASH_LS_FIXTURE}"
 off_case "off/ix-intercept.sh: Grep" ix-intercept.sh "${FX_IN}/grep_plain.json"
-off_case "off/ix-intercept.sh: Grep with block on" ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+off_case "off/ix-intercept.sh: Grep with block explicitly off" ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=0
 off_case "off/ix-intercept.sh: Glob inventory" ix-intercept.sh "${FX_IN}/glob_path.json"
 off_case "off/ix-pre-edit.sh: high-risk Edit" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json"
 off_case "off/ix-pre-edit.sh: Write" ix-pre-edit.sh "${FX_IN}/write_new_file.json"
@@ -1375,6 +1375,12 @@ run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_GREP_INTERCEPT=on
 assert_additional_context "off/IX_GREP_INTERCEPT=on: ix-bash.sh speaks" "is defined at src/auth.ts"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_GREP_INTERCEPT=on
 assert_additional_context "off/IX_GREP_INTERCEPT=on: ix-intercept.sh speaks" "is defined at src/auth.ts"
+# IX_BLOCK_ON_HIGH_CONFIDENCE=1 alone still blocks, as it did before the switch.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "off/IX_BLOCK_ON_HIGH_CONFIDENCE=1 alone: Grep still blocked"
+run_hook ix-intercept.sh "${FX_IN}/glob_path.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "off/IX_BLOCK_ON_HIGH_CONFIDENCE=1 alone: Glob still blocked"
+off_case "off/IX_BLOCK_ON_HIGH_CONFIDENCE=1 leaves ix-bash.sh off" ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_PRE_EDIT_GATE=on
 assert_additional_context "off/IX_PRE_EDIT_GATE=on: ix-pre-edit.sh speaks" "HIGH-RISK EDIT"
 run_hook ix-dependents.sh "${_DEP_BASH_FIXTURE}" IX_EDIT_DEPENDENTS=on
@@ -1537,6 +1543,17 @@ bw_case writes 'rg --pre=./conv foo'
 bw_case writes 'git diff --output=x'
 bw_case writes 'git log -p --ext-diff'
 bw_case writes 'git grep -Ovim foo'
+bw_case writes "sed -n 's/a/b/gw out' f"
+bw_case writes "sed 's/a/b/e' f"
+bw_case writes 'awk -fprog.awk f'
+bw_case writes 'tree -oout.txt'
+bw_case writes 'git -c diff.external=./w.sh diff'
+bw_case writes 'git -c core.pager=./p.sh log'
+bw_case writes 'git -c alias.st=!rm status'
+bw_case writes 'git --exec-path=. diff'
+bw_case reads "sed -n '/^def /p' f"
+bw_case reads 'awk -F, "{print \$2}" f'
+bw_case reads 'git -c core.quotepath=off status'
 bw_case reads 'uniq -c in.txt'
 bw_case reads 'xxd f'
 bw_case reads 'less f'

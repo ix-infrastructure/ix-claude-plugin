@@ -327,12 +327,22 @@ EOF
 run_scenario unmapped
 run_scenario backend
 
-# With the switches unset, the off-by-default hooks run no ix at all.
+# With the switches unset, the off-by-default hooks run no ix at all. The
+# debug log's CMD lines come from the library, which the off path never loads,
+# so a wrapper first on PATH logs every ix process the hooks start.
 section "off by default"
 unset IX_GREP_INTERCEPT IX_EDIT_DEPENDENTS IX_PRE_EDIT_GATE
 SESSION="ci-defaults"
 export IX_DEBUG_LOG="${ROOT_TMP}/hooks-defaults.log"
 : > "$IX_DEBUG_LOG"
+_IX_CALLS="${ROOT_TMP}/ix-calls-defaults.log"
+: > "$_IX_CALLS"
+mkdir -p "${ROOT_TMP}/ix-spy"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$_IX_CALLS" "$(command -v ix)" \
+  > "${ROOT_TMP}/ix-spy/ix"
+chmod +x "${ROOT_TMP}/ix-spy/ix"
+_PATH_BEFORE_SPY="$PATH"
+export PATH="${ROOT_TMP}/ix-spy:${PATH}"
 for _case in \
   'ix-intercept.sh|PreToolUse|Grep|{"pattern":"computeTotal"}' \
   'ix-intercept.sh|PreToolUse|Glob|{"pattern":"**/*.js","path":"src"}' \
@@ -343,10 +353,17 @@ for _case in \
   _label="[defaults] ${_hook} ${_tool}: silent, no ix call"
   if run_hook "$_label" "$_hook" "$_event" "$(payload "$_event" "$_tool" "$_input")"; then
     if [ -n "$OUT" ]; then fail "$_label" "stdout: ${OUT:0:200}"
-    elif grep -q '\] CMD ix ' "$IX_DEBUG_LOG"; then fail "$_label" "$(grep '\] CMD ix ' "$IX_DEBUG_LOG" | head -1)"
+    elif [ -s "$_IX_CALLS" ]; then fail "$_label" "ran: ix $(head -1 "$_IX_CALLS")"
     else pass "$_label"; fi
   fi
+  : > "$_IX_CALLS"
 done
+# The spy itself works: switched on, the same Grep runs ix through it.
+(cd "$PROJECT" && payload PreToolUse Grep '{"pattern":"computeTotal"}' \
+  | IX_GREP_INTERCEPT=on timeout 10 bash "${HOOKS_DIR}/ix-intercept.sh" >/dev/null 2>&1) || true
+if [ -s "$_IX_CALLS" ]; then pass "[defaults] the ix spy logs a switched-on hook's calls"
+else fail "[defaults] the ix spy logs a switched-on hook's calls" "no call logged"; fi
+export PATH="$_PATH_BEFORE_SPY"
 
 # `ix map <root> --silent` only runs once a graph is complete, which needs a
 # backend; check its flag against the CLI's own help instead.

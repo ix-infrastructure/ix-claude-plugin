@@ -14,7 +14,8 @@
 # Off by default, Grep and Glob alike: the Grep hint rarely names anything the
 # Grep itself does not find, and both run ix (`ix locate` + `ix text`, or
 # `ix inventory`) before the tool does. IX_GREP_INTERCEPT=on turns it on
-# (together with the shell-grep hint in ix-bash.sh).
+# (together with the shell-grep hint in ix-bash.sh). So does
+# IX_BLOCK_ON_HIGH_CONFIDENCE=1: whoever asked for the block wants this hook.
 #
 # Exit 0 + JSON stdout, augment → hookSpecificOutput.additionalContext, native
 #                                 tool still runs
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 # Off: exit before reading stdin, jq or the library.
-[ "${IX_GREP_INTERCEPT:-off}" = "on" ] || exit 0
+[ "${IX_GREP_INTERCEPT:-off}" = "on" ] || [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] || exit 0
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
