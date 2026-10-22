@@ -1287,6 +1287,21 @@ dep_run "dependents/read-only: a report is followed up again" hook "${_DEP_GIT_D
 assert_empty "dependents/read-only: an empty follow-up prints nothing"
 dep_run "dependents/read-only: after a silent run, reads skip again" skip "${_DEP_GIT_DIFF}" "${_dep_state}"
 
+# A report prunes markers sessions left behind a day ago, and only those.
+_dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
+_dep_cache="${_dep_state}/ix-plugin-cache-${UID}"
+mkdir -p "${_dep_cache}" && chmod 700 "${_dep_cache}"
+: > "${_dep_cache}/dependents-owed-stale"
+touch -d '2 days ago' "${_dep_cache}/dependents-owed-stale"
+: > "${_dep_cache}/dependents-owed-recent"
+dep_run "dependents/markers: a report runs ix hook" hook "${_DEP_SED_I}" "${_dep_state}"
+if [ ! -e "${_dep_cache}/dependents-owed-stale" ] && [ -e "${_dep_cache}/dependents-owed-recent" ] \
+   && [ -e "${_dep_cache}/dependents-owed-s-ro" ]; then
+  pass "dependents/markers: a day-old marker is pruned, recent ones kept"
+else
+  fail "dependents/markers: a day-old marker is pruned, recent ones kept" "left: $(ls "${_dep_cache}" | tr '\n' ' ')"
+fi
+
 _dep_state=$(mktemp -d -p "${TEST_TMPDIR}")
 dep_run "dependents/read-only: an Edit always asks ix hook" hook "${_DEP_EDIT}" "${_dep_state}"
 dep_run "dependents/read-only: a read after an Edit's report is a follow-up" hook "${_DEP_CAT_HEAD}" "${_dep_state}" \
@@ -1502,6 +1517,33 @@ bw_case writes 'fd -e pyc -x rm'
 bw_case writes "awk -i inplace '{print}' f"
 bw_case writes 'sort -o out.txt in.txt'
 bw_case writes 'tree -o out.txt'
+# Output operands, and scripts or flags that write or run a program.
+bw_case writes 'uniq in.txt out.txt'
+bw_case writes 'xxd in out'
+bw_case writes 'xxd -r dump.hex out.bin'
+bw_case writes 'less -o log f'
+bw_case writes 'less --log-file=log f'
+bw_case writes 'file -C -m magic'
+bw_case writes "awk '{print > \"out\"}' f"
+bw_case writes "awk '{print | \"sh\"}' f"
+bw_case writes "awk 'BEGIN{system(\"rm x\")}'"
+bw_case writes 'awk -f prog.awk f'
+bw_case writes "sed -n 'w out' f"
+bw_case writes "sed 's/a/b/w out' f"
+bw_case writes "sed '1e date' f"
+bw_case writes 'sed -f script.sed f'
+bw_case writes "rg --pre 'sh' foo"
+bw_case writes 'rg --pre=./conv foo'
+bw_case writes 'git diff --output=x'
+bw_case writes 'git log -p --ext-diff'
+bw_case writes 'git grep -Ovim foo'
+bw_case reads 'uniq -c in.txt'
+bw_case reads 'xxd f'
+bw_case reads 'less f'
+bw_case reads 'file a.bin'
+bw_case reads "sed -E 's/hello world/the end/' a"
+bw_case reads 'rg -n --type ts foo'
+bw_case reads 'git diff --stat HEAD'
 # git, everything else.
 bw_case writes 'git commit -m "x"'
 bw_case writes 'git checkout -- a.ts'

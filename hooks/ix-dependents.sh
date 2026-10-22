@@ -97,6 +97,11 @@ CONTEXT=$(printf '%s' "$_out" | jq -r '.hookSpecificOutput.additionalContext // 
 
 # Owe the next command a run, even a read-only one.
 { [ -z "$_owed" ] || : > "$_owed"; } 2>/dev/null || true
+# A session that ended right after a report never settles its marker; drop any
+# a day old. Only here, on the rare report path, so no other run pays for it.
+if [ -n "$_owed" ]; then
+  find "${_owed%/*}" -maxdepth 1 -type f -name 'dependents-owed-*' -mmin +1440 -delete 2>/dev/null || true
+fi
 
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 ix_log "DECISION augment ${#CONTEXT} chars (${_elapsed_ms}ms)"

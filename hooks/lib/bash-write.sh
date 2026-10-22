@@ -20,8 +20,10 @@
 #     /dev/null, /dev/stdout or /dev/stderr; fd dups (`2>&1`, `>&2`) are fine
 #   - any heredoc or herestring (`<<`, `<<<`): it usually feeds a script
 #   - in-place flags: `sed -i`/`--in-place`, `awk -i inplace`, `sort -o`,
-#     `tree -o`; `find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`,
-#     `fd -x/-X/--exec*`
+#     `tree -o`, `less -o`, `file -C`, `git diff/log --output`; output operands
+#     (`uniq in out`, `xxd in out`); scripts that write or run commands (sed
+#     `w`/`W`/`e`/`-f`, awk `>`/`|`/`system`/`-f`, `rg --pre`, `git --ext-diff`);
+#     `find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `fd -x/-X/--exec*`
 # Quoted text is data, not syntax (`grep -E "a|b"` is one command). The line
 # splits on `&&`, `||`, `|`, `|&`, `;`, `&`, newlines and subshell parens; each
 # command drops its leading `VAR=value` assignments, `!`, `{`/`}` and the
@@ -40,6 +42,7 @@ ix_bash_may_write() {
   local _n=${#_s} _i=0 _c _q="" _w="" _hw=0 _redir=0 _j
   local -a _words=()
   # Runs of characters with no meaning in their quoting state, taken in one step.
+  local _re_sed_write='(^|[^A-Za-z])([wW][[:space:]]+[^[:space:]]|e([[:space:];}]|$))'
   local _re_plain="^[^[:space:]'\"\\\`\$;&|<>()]+" _re_sq="^[^']+" _re_dq="^[^\"\\\`\$]+"
   [ "$_n" -gt 0 ] && [ "$_n" -le 1024 ] || return 0
 
@@ -189,10 +192,27 @@ _ix_bw_command_reads() {
   local -a _args=("${_words[@]:_k+1}")
 
   case "$_cmd" in
-    cat|head|tail|ls|grep|egrep|fgrep|rg|ag|wc|echo|printf|pwd|cd|uniq|cut|tr|nl|\
-    which|type|file|stat|du|df|less|more|diff|cmp|jq|true|false|test|'['|'[['|\
+    cat|head|tail|ls|grep|egrep|fgrep|ag|wc|echo|printf|pwd|cd|cut|tr|nl|\
+    which|type|stat|du|df|more|diff|cmp|jq|true|false|test|'['|'[['|\
     basename|dirname|realpath|readlink|date|whoami|id|uname|column|fold|comm|join|\
-    paste|od|xxd|hexdump|strings|md5sum|sha1sum|sha256sum)
+    paste|od|hexdump|strings|md5sum|sha1sum|sha256sum)
+      return 0 ;;
+    # A second file operand is the output file.
+    uniq|xxd) _ix_bw_operands_le 1 ;;
+    rg)
+      for _a in ${_args[@]+"${_args[@]}"}; do
+        case "$_a" in --pre|--pre=*) return 1 ;; esac
+      done
+      return 0 ;;
+    less)
+      for _a in ${_args[@]+"${_args[@]}"}; do
+        case "$_a" in --log-file*|--LOG-FILE*) return 1 ;; --*) ;; -*[oO]*) return 1 ;; esac
+      done
+      return 0 ;;
+    file)
+      for _a in ${_args[@]+"${_args[@]}"}; do
+        case "$_a" in --compile) return 1 ;; --*) ;; -*C*) return 1 ;; esac
+      done
       return 0 ;;
     sort)
       for _a in ${_args[@]+"${_args[@]}"}; do
@@ -212,17 +232,32 @@ _ix_bw_command_reads() {
         case "$_a" in -x|-X|--exec|--exec=*|--exec-batch|--exec-batch=*) return 1 ;; esac
       done
       return 0 ;;
+    # The script itself can write: `w file`, `s/a/b/w file`, `W`, or run `e`.
+    # A script from a file (-f) is unknown.
     sed)
       for _a in ${_args[@]+"${_args[@]}"}; do
-        case "$_a" in --in-place*) return 1 ;; --*) ;; -*i*) return 1 ;; esac
+        case "$_a" in --in-place*|--file*) return 1 ;; --*) ;; -*[if]*) return 1 ;; esac
+        [[ "$_a" =~ $_re_sed_write ]] && return 1
       done
       return 0 ;;
+    # The program can write: `print > "f"`, `print | "cmd"`, `system()`.
     awk|gawk)
-      for _a in ${_args[@]+"${_args[@]}"}; do [[ "$_a" == *inplace* ]] && return 1; done
+      for _a in ${_args[@]+"${_args[@]}"}; do
+        case "$_a" in *inplace*|*'>'*|*'|'*|*system*|-f|--file*) return 1 ;; esac
+      done
       return 0 ;;
     git) _ix_bw_git_reads ;;
     *) return 1 ;;
   esac
+}
+
+# Returns 0 when at most N of _args are operands (words not starting with -).
+_ix_bw_operands_le() {
+  local _a _ops=0
+  for _a in ${_args[@]+"${_args[@]}"}; do
+    case "$_a" in -*) ;; *) _ops=$(( _ops + 1 )) ;; esac
+  done
+  [ "$_ops" -le "$1" ]
 }
 
 _ix_bw_git_reads() {
@@ -235,6 +270,11 @@ _ix_bw_git_reads() {
     esac
   done
   [ "$_g" -lt "$_gm" ] || return 1
+  # Flags that write a file or run a configured program.
+  local _ga
+  for _ga in "${_args[@]:_g+1}"; do
+    case "$_ga" in --output|--output=*|--ext-diff|-O*|--open-files-in-pager*) return 1 ;; esac
+  done
   case "${_args[_g]}" in
     status|diff|log|show|blame|grep|ls-files|ls-tree|rev-parse|cat-file|describe|shortlog) return 0 ;;
     branch) [ $(( _gm - _g )) -eq 1 ] ;;

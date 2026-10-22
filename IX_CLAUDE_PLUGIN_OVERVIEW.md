@@ -1120,7 +1120,7 @@ User types: "how does the auth middleware work?"
 1. ix-briefing.sh fires (Pro, once/10 min) → injects activeGoals + openBugs + recentDecisions
 
 2. Claude invokes Grep("auth middleware")
-3. ix-intercept.sh fires BEFORE Grep:
+3. ix-intercept.sh fires BEFORE Grep (only with `IX_GREP_INTERCEPT=on`; off by default):
    - runs ix text + ix locate in parallel
    - injects: `[ix] 'auth middleware' — symbol: AuthMiddleware (class, middleware/auth.ts) | 4 text hits in auth.ts, router.ts, app.ts`
    - Claude now knows the symbol location from graph before Grep even runs
@@ -1131,7 +1131,7 @@ User types: "how does the auth middleware work?"
    - Claude reads the file directly if it still needs implementation detail
 
 6. Claude invokes Edit("middleware/auth.ts", ...)
-7. ix-pre-edit.sh fires BEFORE Edit:
+7. ix-pre-edit.sh fires BEFORE Edit (only with `IX_PRE_EDIT_GATE=on`; off by default):
    - runs ix impact → finds 23 dependents, risk=high
    - injects: `[ix] ⚠️ HIGH-RISK EDIT — auth.ts has 23 dependents. Hot spots: validateToken, refreshSession, checkScope. → Run tests on all routes that import this middleware.`
 
