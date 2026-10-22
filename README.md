@@ -49,17 +49,20 @@ High-level cognitive skills — each one infers intent, orchestrates multiple gr
 
 All skills fall back gracefully when ix is unavailable.
 
-## Agents
+Skills are slash commands you type. They are hidden from the model (`disable-model-invocation: true`), so Claude does not start one by itself, and their descriptions are not sent with every model call.
 
-Autonomous multi-step agents for complex tasks:
+## Agent
 
-| Agent | Purpose |
-|-------|---------|
-| `ix-explorer` | General-purpose graph exploration, open-ended questions |
-| `ix-system-explorer` | Full architectural model of a codebase or region |
-| `ix-bug-investigator` | Autonomous investigation from symptom to root cause candidates |
-| `ix-safe-refactor-planner` | Blast radius + safe change sequencing for refactors |
-| `ix-architecture-auditor` | Full structural health report with ranked improvements |
+One agent, `ix-explorer`: graph-first exploration for open-ended questions about unfamiliar code. Its one-line description is the only part of the plugin's skills and agents that Claude Code lists in every model call.
+
+Skills that delegate deeper work launch `ix-explorer` with a role brief that sits beside the skill:
+
+| Skill | Role brief | Purpose |
+|-------|-----------|---------|
+| `/ix-understand`, `/ix-docs` | `skills/ix-understand/system-explorer-brief.md` | Full architectural model of a codebase or region |
+| `/ix-debug` | `skills/ix-debug/bug-investigator-brief.md` | Investigation from symptom to root cause candidates |
+| `/ix-plan` | `skills/ix-plan/refactor-planner-brief.md` | Blast radius + safe change sequencing for refactors |
+| `/ix-architecture` | `skills/ix-architecture/architecture-auditor-brief.md` | Full structural health report with ranked improvements |
 
 ## Automatic hooks
 

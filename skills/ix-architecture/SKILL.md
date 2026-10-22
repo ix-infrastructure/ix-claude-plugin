@@ -2,6 +2,7 @@
 name: ix-architecture
 description: Analyze system design — structure, coupling, code smells, and high-risk hotspots. Purely graph-based, no code reads.
 argument-hint: [path or subsystem name — empty for whole repo] [--save [path]]
+disable-model-invocation: true
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -78,7 +79,7 @@ Filter to scope if `$ARGUMENTS` was provided. Store as `SMELLS`.
 - A `god-module` smell is present
 - Any smell has `crosscut_score > 0.1`
 
-→ Spawn the **ix-architecture-auditor** agent. Pass `SUBSYSTEMS` and `SMELLS` directly in the agent prompt so it can skip its own Steps 1–4 (subsystem + smell collection). Include the scope from `$ARGUMENTS`. Relay the agent's complete output to the user, then skip to the **[Pro] Cross-reference decisions** step.
+→ Spawn the **ix-explorer** agent (Agent tool, `subagent_type: "ix-memory:ix-explorer"`). Start its prompt with **Role brief:** Read `${CLAUDE_SKILL_DIR}/architecture-auditor-brief.md` before anything else and follow it. Pass `SUBSYSTEMS` and `SMELLS` directly in the agent prompt so it can skip its own Steps 1–4 (subsystem + smell collection). Include the scope from `$ARGUMENTS`. Relay the agent's complete output to the user, then skip to the **[Pro] Cross-reference decisions** step.
 
 ---
 

@@ -93,8 +93,19 @@ done
 
 echo ""
 echo "  Agents:"
-for agent in ix-explorer ix-system-explorer ix-bug-investigator ix-safe-refactor-planner ix-architecture-auditor; do
+for agent in ix-explorer; do
   [ -f "$CACHE/agents/$agent.md" ] && ok "$agent" || fail "missing: agents/$agent.md"
+done
+for f in "$CACHE"/agents/*.md; do
+  [ "$(basename "$f")" = "ix-explorer.md" ] || fail "unexpected agent: agents/$(basename "$f")"
+done
+
+echo ""
+echo "  Skills hidden from the model:"
+for f in "$CACHE"/skills/*/SKILL.md; do
+  skill=$(basename "$(dirname "$f")")
+  awk 'NR==1{if($0!="---")exit; next} /^---[[:space:]]*$/{exit} /^disable-model-invocation:[[:space:]]*true[[:space:]]*$/{found=1} END{exit !found}' "$f" \
+    && ok "$skill" || fail "$skill: frontmatter lacks disable-model-invocation: true"
 done
 
 echo ""

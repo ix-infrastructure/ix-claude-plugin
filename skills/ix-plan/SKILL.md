@@ -2,6 +2,7 @@
 name: ix-plan
 description: Generate a risk-ordered implementation plan for a set of targets. Assesses blast radius per target, finds data flows between them, and produces a safe change sequence.
 argument-hint: <symbol1> [symbol2...] or "description of what you want to change" [--save [path]]
+disable-model-invocation: true
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -54,7 +55,7 @@ Rank targets by risk level: critical > high > medium > low.
 1. From Phase 2 results: does any target have **dependents > 20**?
 2. If not already known, run `ix subsystems --format llm` (reads cached data — cheap) and check if any non-low-risk target's region has **coupling > 5**
 3. If either condition is true:
-   - Spawn `ix-safe-refactor-planner` with pre-filled context:
+   - Spawn the `ix-explorer` agent (Agent tool, `subagent_type: "ix-memory:ix-explorer"`) with pre-filled context. Start its prompt with **Role brief:** Read `${CLAUDE_SKILL_DIR}/refactor-planner-brief.md` before anything else and follow it. Then pass:
      - **TARGETS**: the resolved symbol list from Phase 1
      - **RISK_TABLE**: the ranked table from Phase 2 (agent skips its own Steps 1–3)
      - **SUBSYSTEMS**: subsystems output from step 2

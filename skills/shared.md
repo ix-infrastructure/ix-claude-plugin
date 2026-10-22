@@ -115,11 +115,11 @@ real either way (`decisions`: json 1,144 B → text 446 B).
 
 **Raw `ix` commands** — use directly for single-step structural lookups: "where is X defined?", "what calls X?", "what does X import?". Cheaper than invoking a skill.
 
-**Skills** (`/ix-understand`, `/ix-investigate`, etc.) — use when the task has multiple phases or requires synthesis. Skills sequence queries, stop early, and produce structured output. Always prefer a skill over a chain of manual ix commands.
+**Skills** (`/ix-understand`, `/ix-investigate`, etc.) — slash commands a person types; they are hidden from the model, so it cannot start one itself. Suggest one when the task has multiple phases or requires synthesis. Skills sequence queries, stop early, and produce structured output.
 
 **Hooks** — automatic context injected at tool boundaries (Grep, Glob, Edit, Bash, Stop). You do not invoke hooks; they fire on their own. When a hook fires, it either blocks the native tool with an ix answer or injects context before the tool runs. Do not duplicate what hooks already do.
 
-**Agents** (`ix-system-explorer`, `ix-bug-investigator`, etc.) — delegate only for large, delegatable work: full architecture exploration, autonomous multi-file bug investigation, large refactor planning. Too expensive for routine questions. Skills call agents automatically when depth warrants it.
+**Agent** (`ix-explorer`) — the plugin's one agent. Delegate only for large, delegatable work: open-ended exploration, full architecture exploration, autonomous multi-file bug investigation, large refactor planning. Too expensive for routine questions. Skills launch it automatically, with a role brief, when depth warrants it.
 
 ---
 

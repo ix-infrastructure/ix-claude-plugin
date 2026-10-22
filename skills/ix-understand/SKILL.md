@@ -2,6 +2,7 @@
 name: ix-understand
 description: Build a detailed architectural mental model of a system, subsystem, or the whole repo. Graph-first, source reads only when needed for data flow or key patterns.
 argument-hint: [target] [--shallow (default) | --medium | --deep] [--save [path]]
+disable-model-invocation: true
 ---
 
 > [ix-claude-plugin shared model](../shared.md)
@@ -17,7 +18,7 @@ Parse `$ARGUMENTS` before doing anything else:
 - `--deep`: full parallel agent strategy
 - `--save [path]`: if present, set `SAVE_PATH`; path is optional — if absent, auto-generate `ix-understand-<target-slug>.md` in cwd (target slug = `TARGET` with spaces and slashes replaced by `-`, or `repo` if TARGET is empty); if `--save` is not given at all, `SAVE_PATH` is empty.
 
-**MANDATORY for `--medium` and `--deep`: This skill MUST use the Agent tool (subagent_type: "ix-memory:ix-system-explorer") for all exploration work. Do NOT run ix commands yourself except for the Phase 1 orient commands below. All subsystem exploration MUST be delegated to agents.**
+**MANDATORY for `--medium` and `--deep`: This skill MUST use the Agent tool (subagent_type: "ix-memory:ix-explorer") for all exploration work, and every agent prompt MUST start with the role-brief line shown in the prompts below (the brief sits in this skill's base directory). Do NOT run ix commands yourself except for the Phase 1 orient commands below. All subsystem exploration MUST be delegated to agents.**
 
 ## Phase 1 — Orient
 
@@ -76,9 +77,11 @@ Then stop. Suggest deeper options at the bottom:
 
 ### --medium
 
-Launch a **single** `ix-memory:ix-system-explorer` agent regardless of system count. Do not proceed to Phase 2.
+Launch a **single** `ix-memory:ix-explorer` agent regardless of system count. Do not proceed to Phase 2.
 
 Pass:
+> **Role brief:** Read `${CLAUDE_SKILL_DIR}/system-explorer-brief.md` before anything else and follow it.
+>
 > Build an architectural mental model of: $TARGET (or the whole repo if no target)
 >
 > **Orient data (pre-computed):**
@@ -100,13 +103,15 @@ Continue to Phase 2.
 
 Count the number of **significant top-level systems** (file count >= 10 or confidence >= 0.5).
 
-- **≤ 3 significant systems**: Launch a **single** `ix-system-explorer` agent with the full prompt (Phase 3A).
-- **> 3 significant systems**: Launch **parallel** `ix-system-explorer` agents, one per system (Phase 3B).
+- **≤ 3 significant systems**: Launch a **single** `ix-explorer` agent with the full prompt (Phase 3A).
+- **> 3 significant systems**: Launch **parallel** `ix-explorer` agents, one per system (Phase 3B).
 
 ## Phase 3A — Single agent (--deep, small codebase)
 
-**You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-system-explorer"` here. Do NOT do this work yourself. Launch one agent with:
+**You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-explorer"` here. Do NOT do this work yourself. Launch one agent with:
 
+> **Role brief:** Read `${CLAUDE_SKILL_DIR}/system-explorer-brief.md` before anything else and follow it.
+>
 > Build a **detailed** architectural mental model of: $TARGET
 >
 > If no target is specified, explore the whole repo.
@@ -126,8 +131,10 @@ Then present the agent's output directly to the user.
 
 ## Phase 3B — Parallel agents (--deep, large codebase)
 
-**You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-system-explorer"` for each system. Launch **ALL agents in a single message** (this runs them in parallel). Do NOT use `run_in_background`. You must wait for all agents to return before proceeding to Phase 4. Each agent gets:
+**You MUST use the Agent tool** with `subagent_type: "ix-memory:ix-explorer"` for each system. Launch **ALL agents in a single message** (this runs them in parallel). Do NOT use `run_in_background`. You must wait for all agents to return before proceeding to Phase 4. Each agent gets:
 
+> **Role brief:** Read `${CLAUDE_SKILL_DIR}/system-explorer-brief.md` before anything else and follow it.
+>
 > Explore the **$SYSTEM_NAME** subsystem in detail.
 >
 > **Orient data (pre-computed):**
@@ -172,8 +179,10 @@ Then present the agent's output directly to the user.
 >
 > **Label every claim as [graph] or [inferred].**
 
-Include one additional **ix-system-explorer** agent in the same single message for **cross-cutting concerns**:
+Include one additional **ix-explorer** agent in the same single message for **cross-cutting concerns**:
 
+> **Role brief:** Read `${CLAUDE_SKILL_DIR}/system-explorer-brief.md` before anything else and follow it.
+>
 > Analyze **cross-system structure** for this codebase.
 >
 > **Orient data (pre-computed):**

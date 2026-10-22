@@ -88,17 +88,44 @@ jobs:
           done
           exit $FAIL
 
+      # Claude Code lists every model-invocable skill's description in every
+      # model call. Skills here are slash commands a person types, so each one
+      # must opt out; a new skill without the key would add to every prompt.
+      - name: Validate skills are hidden from the model
+        run: |
+          echo "── Skills: disable-model-invocation ──"
+          FAIL=0
+          for f in skills/*/SKILL.md; do
+            if awk 'NR==1{if($0!="---")exit; next} /^---[[:space:]]*$/{exit} /^disable-model-invocation:[[:space:]]*true[[:space:]]*$/{found=1} END{exit !found}' "$f"; then
+              echo "  [ok] $f"
+            else
+              echo "  [FAIL] $f: frontmatter lacks disable-model-invocation: true"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
+
+      # Every agent's description is listed in every model call too, so the
+      # plugin ships exactly one; skills hand it a role brief instead.
       - name: Validate expected agents
         run: |
           echo "── Agents ──"
           FAIL=0
-          for agent in ix-explorer ix-system-explorer ix-bug-investigator ix-safe-refactor-planner ix-architecture-auditor; do
+          EXPECTED="ix-explorer"
+          for agent in $EXPECTED; do
             if [ -f "agents/$agent.md" ]; then
               echo "  [ok] $agent"
             else
               echo "  [FAIL] missing: agents/$agent.md"
               FAIL=1
             fi
+          done
+          for f in agents/*.md; do
+            [ -e "$f" ] || continue
+            case " $EXPECTED " in
+              *" $(basename "$f" .md) "*) ;;
+              *) echo "  [FAIL] unexpected agent: $f"; FAIL=1 ;;
+            esac
           done
           exit $FAIL
 
