@@ -34,17 +34,19 @@ hooks/
   hooks.json                 active Claude Code hook registry
   ix-briefing.sh             prompt-time session context
   ix-annotate.sh             visible attribution / briefing annotation
-  ix-intercept.sh            Grep / Glob interception
-  ix-bash.sh                 grep / rg detection inside Bash commands
-  ix-pre-edit.sh             pre-edit impact warning
+  ix-intercept.sh            Grep / Glob interception (off unless IX_GREP_INTERCEPT=on)
+  ix-bash.sh                 grep / rg detection inside Bash commands (off unless IX_GREP_INTERCEPT=on)
+  ix-pre-edit.sh             pre-edit impact warning (off unless IX_PRE_EDIT_GATE=on)
   ix-ingest.sh               post-edit guarded root-map request
-  ix-dependents.sh           post-edit dependents of the changed symbols (ix hook)
+  ix-dependents.sh           post-edit dependents of the changed symbols (ix hook; off unless IX_EDIT_DEPENDENTS=on)
   ix-map.sh                  async Stop-time guarded root-map request
   ix-read.sh                 disabled placeholder; not registered
   ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh
+  lib/timing.sh              IX_DEBUG_LOG EXIT line; lib/bash-write.sh: can a Bash line write?
 tests/
   test_hooks.sh              integration harness
   test_real_ix.sh            hooks against a real, released ix (CI job real-ix)
+  bench_hooks.sh             median ms per hook on a representative payload
   mock-ix.sh                 ix CLI stub
   fixtures/                  hook inputs and expected outputs
 .claude-plugin/

@@ -176,6 +176,10 @@ Fires before any Grep or Glob tool call. Runs graph queries in parallel and inje
 a one-line context summary so Claude has graph-aware knowledge before the native
 tool runs. The native tool still runs afterward.
 
+**Off by default** (Grep and Glob alike): `IX_GREP_INTERCEPT=on` turns it on,
+and so does `IX_BLOCK_ON_HIGH_CONFIDENCE=1`.
+Off, it exits on its first lines: no ix call, no jq, nothing printed.
+
 **No-op cases:**
 - Grep patterns shorter than 3 chars, secret-like strings, regex/literal searches, or empty ix results
 - Glob calls without a path, bare extension globs such as `*.ts`, literal path globs, or empty inventory results
@@ -215,6 +219,8 @@ Fires before Bash tool calls that contain a `grep` or `rg` search segment,
 including wrapped forms such as `cd src && rg AuthService` and
 `find src -name '*.ts' | xargs grep AuthService`.
 
+**Off by default:** `IX_GREP_INTERCEPT=on` turns it on (with ix-intercept.sh).
+
 **No-op cases:** non-search Bash commands, extracted patterns shorter than 3 chars,
 secret-like strings, or empty ix results.
 
@@ -241,13 +247,18 @@ and `sed -i` as often as through Edit, and the edit-tool hooks never see those.
    session, ~300 tokens at most
 3. Passes that on as `additionalContext` after the tool result; prints nothing
    when ix has nothing to say, is too old to have `ix hook`, or fails
-4. `IX_EDIT_DEPENDENTS=off` turns it off
+4. Off by default; `IX_EDIT_DEPENDENTS=on` turns it on. When on, a Bash command
+   that can only read (`cat`, `ls`, `git diff`; `hooks/lib/bash-write.sh`) skips
+   `ix hook`, except right after a report, when the next command runs it once.
+   `IX_BASH_EDIT_CLASSIFIER=off` runs it after every Bash command
 
 ---
 
 ### ix-pre-edit.sh — PreToolUse(Edit|Write|MultiEdit)
 
 Fires before Claude edits or creates a file. Warns about blast radius.
+
+**Off by default:** `IX_PRE_EDIT_GATE=on` turns it on, unchanged.
 
 **No-op cases:** markdown/text/lock files, common binary assets, compiled artifacts,
 unknown graph targets, low-risk files, or files with fewer than 3 effective dependents.
@@ -1125,7 +1136,7 @@ User types: "how does the auth middleware work?"
 1. ix-briefing.sh fires (Pro, once/10 min) → injects activeGoals + openBugs + recentDecisions
 
 2. Claude invokes Grep("auth middleware")
-3. ix-intercept.sh fires BEFORE Grep:
+3. ix-intercept.sh fires BEFORE Grep (only with `IX_GREP_INTERCEPT=on`; off by default):
    - runs ix text + ix locate in parallel
    - injects: `[ix] 'auth middleware' — symbol: AuthMiddleware (class, middleware/auth.ts) | 4 text hits in auth.ts, router.ts, app.ts`
    - Claude now knows the symbol location from graph before Grep even runs
@@ -1136,7 +1147,7 @@ User types: "how does the auth middleware work?"
    - Claude reads the file directly if it still needs implementation detail
 
 6. Claude invokes Edit("middleware/auth.ts", ...)
-7. ix-pre-edit.sh fires BEFORE Edit:
+7. ix-pre-edit.sh fires BEFORE Edit (only with `IX_PRE_EDIT_GATE=on`; off by default):
    - runs ix impact → finds 23 dependents, risk=high
    - injects: `[ix] ⚠️ HIGH-RISK EDIT — auth.ts has 23 dependents. Hot spots: validateToken, refreshSession, checkScope. → Run tests on all routes that import this middleware.`
 

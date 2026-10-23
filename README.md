@@ -66,16 +66,18 @@ Skills that delegate deeper work launch `ix-explorer` with a role brief that sit
 
 ## Automatic hooks
 
-| Trigger | Hook | Effect |
-|---------|------|--------|
-| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**. On a session's first task-sized prompt, also the files Ix trusts as starting points for it (`ix context --from-issue - --lean`; `IX_ISSUE_START=off` to disable). Can also ask Claude to append a short final `Ix` section (`IX_ANNOTATE_CHANNEL`) |
-| Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | Grep naming one definition: where it is defined and its callers at their call sites (`ix locate` + `ix callers`), else silent. Glob: `ix inventory` |
-| Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | Extracts the pattern; if it names one definition, adds where it is defined and its callers, else silent |
-| Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | Runs `ix impact` before the edit |
-| Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | Requests the guarded root map (below); never maps the single file |
-| Claude edits, by tool or through `Bash` | `PostToolUse` → `ix-dependents.sh` | `ix hook claude-post-edit` (Ix CLI 0.12.1+): from the working tree's diff, the callers, importers and tests of each symbol the edit changed, once per session (`IX_EDIT_DEPENDENTS=off` to disable) |
-| Claude finishes responding | `Stop` → `ix-annotate.sh` | Emits a factual summary of how ix helped on that turn on non-`modelSuffix` channels |
-| Claude finishes responding | `Stop` → `ix-map.sh` (async) | Guarded `ix map <root> --silent`: git root of the session's cwd (not `$HOME`), already-mapped projects only, debounced per root, detached |
+| Trigger | Hook | Default | Effect |
+|---------|------|---------|--------|
+| User sends any prompt | `UserPromptSubmit` → `ix-briefing.sh` | on | Injects session briefing (goals, bugs, decisions) once per 10 min — **requires Ix Pro**. On a session's first task-sized prompt, also the files Ix trusts as starting points for it (`ix context --from-issue - --lean`; `IX_ISSUE_START=off` to disable). Can also ask Claude to append a short final `Ix` section (`IX_ANNOTATE_CHANNEL`) |
+| Claude runs `Grep` or `Glob` | `PreToolUse` → `ix-intercept.sh` | off: `IX_GREP_INTERCEPT=on` (or `IX_BLOCK_ON_HIGH_CONFIDENCE=1`) | Grep naming one definition: where it is defined and its callers at their call sites (`ix locate` + `ix callers`), else silent. Glob with a path: `ix inventory`. When on, costs `ix locate` + `ix text` before every Grep and `ix inventory` before most Globs with a path; it rarely names something the search does not find itself |
+| Claude runs `Bash` with grep/rg | `PreToolUse` → `ix-bash.sh` | off: `IX_GREP_INTERCEPT=on` | Extracts the pattern; if it names one definition, adds where it is defined and its callers, else silent. When on, costs one `ix locate` before every shell grep |
+| Claude edits a file | `PreToolUse` → `ix-pre-edit.sh` | off: `IX_PRE_EDIT_GATE=on` | Runs `ix impact` before the edit and warns when the file has many dependents (a count and a risk level). When on, costs one `ix impact` before every edit |
+| Claude edits a file | `PostToolUse` → `ix-ingest.sh` (async) | on | Requests the guarded root map (below); never maps the single file |
+| Claude edits, by tool or through `Bash` | `PostToolUse` → `ix-dependents.sh` | off: `IX_EDIT_DEPENDENTS=on` | `ix hook claude-post-edit` (Ix CLI 0.12.1+): from the working tree's diff, the callers, importers and tests of each symbol the edit changed, once per session. When on, costs one `ix hook` after every edit and after every Bash command that may write; a Bash command that can only read (`cat`, `ls`, `git diff`, ...) skips it, except right after a report (`IX_BASH_EDIT_CLASSIFIER=off` runs it after every Bash command) |
+| Claude finishes responding | `Stop` → `ix-annotate.sh` | on | Emits a factual summary of how ix helped on that turn on non-`modelSuffix` channels |
+| Claude finishes responding | `Stop` → `ix-map.sh` (async) | on | Guarded `ix map <root> --silent`: git root of the session's cwd (not `$HOME`), already-mapped projects only, debounced per root, detached |
+
+The hooks that are off by default block the tool call while they run, and what they say rarely changes what Claude does next. Off, each exits on its first lines (no ix call, no jq, nothing printed). To turn one back on, set its switch in the environment Claude Code starts in, e.g. `export IX_EDIT_DEPENDENTS=on`.
 
 `hooks/ix-read.sh` remains in the repo as a disabled placeholder, but it is not registered in `hooks/hooks.json` and does not run at runtime.
 

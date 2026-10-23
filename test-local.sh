@@ -150,20 +150,21 @@ if [ "$IX_OK" = "1" ]; then
     && ok "ix-read.sh → additionalContext injected" \
     || info "ix-read.sh → no output (run 'ix map' first)"
 
+  # These three are off by default; switch each on to see what it says.
   GREP_OUT=$(echo '{"tool_name":"Grep","tool_input":{"pattern":"ix inventory"}}' \
-    | bash "$CACHE/hooks/ix-intercept.sh" 2>/dev/null || echo "")
+    | IX_GREP_INTERCEPT=on bash "$CACHE/hooks/ix-intercept.sh" 2>/dev/null || echo "")
   echo "$GREP_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-intercept.sh → additionalContext injected" \
     || info "ix-intercept.sh → no output"
 
   BASH_OUT=$(echo '{"tool_name":"Bash","tool_input":{"command":"rg \"def \" --type py"}}' \
-    | bash "$CACHE/hooks/ix-bash.sh" 2>/dev/null || echo "")
+    | IX_GREP_INTERCEPT=on bash "$CACHE/hooks/ix-bash.sh" 2>/dev/null || echo "")
   echo "$BASH_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-bash.sh → additionalContext injected" \
     || info "ix-bash.sh → no output"
 
   EDIT_OUT=$(echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$REPO/skills/ix-understand/SKILL.md\",\"old_string\":\"x\",\"new_string\":\"y\"}}" \
-    | bash "$CACHE/hooks/ix-pre-edit.sh" 2>/dev/null || echo "")
+    | IX_PRE_EDIT_GATE=on bash "$CACHE/hooks/ix-pre-edit.sh" 2>/dev/null || echo "")
   echo "$EDIT_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
     && ok "ix-pre-edit.sh → additionalContext injected" \
     || info "ix-pre-edit.sh → no output"
