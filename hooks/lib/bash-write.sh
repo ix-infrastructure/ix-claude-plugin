@@ -21,11 +21,17 @@
 #   - any heredoc or herestring (`<<`, `<<<`): it usually feeds a script
 #   - in-place flags: `sed -i`/`--in-place`, `awk -i inplace`, `sort -o`,
 #     `tree -o`, `less -o`, `file -C`, `git diff/log --output`; output operands
-#     (`uniq in out`, `xxd in out`); scripts that write or run commands (sed
-#     `w`/`W`/`e`/`-f`, awk `>`/`|`/`system`/`-f`, `rg --pre`, `git --ext-diff`,
-#     `git -c` other than display settings, `git --exec-path=`);
-#     `find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `fd -x/-X/--exec*`
-# Quoted text is data, not syntax (`grep -E "a|b"` is one command). The line
+#     (`uniq in out`, `xxd - out`); scripts that write or run commands (sed
+#     `w`/`W`/`e`/`-f`, awk `>`/`|`/`system`/`-f`, `rg --pre`, `ag --pager`,
+#     `git --ext-diff`, `git -c` other than display settings,
+#     `git --exec-path=`); `find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`,
+#     `fd -x/-X/--exec*` (also inside combined flags such as `-Hx`)
+#   - a leading assignment to a variable that can name a program or change
+#     which one runs: `GIT_*`, `*PAGER` (except `cat` or empty), `LESS*`,
+#     `LD_*`, `DYLD_*`, `PATH`, `BASH_ENV`, `ENV`, `EDITOR`, `VISUAL`, `SHELL`,
+#     `RIPGREP_CONFIG_PATH`
+# Quoted text is data, not syntax (`grep -E "a|b"` is one command), and so is
+# a comment (`#` at the start of a word, to the end of the line). The line
 # splits on `&&`, `||`, `|`, `|&`, `;`, `&`, newlines and subshell parens; each
 # command drops its leading `VAR=value` assignments, `!`, `{`/`}` and the
 # wrappers `time`, `nice`, `command` and `xargs` (with their options).
@@ -43,14 +49,22 @@ ix_bash_may_write() {
   local _n=${#_s} _i=0 _c _q="" _w="" _hw=0 _redir=0 _j
   local -a _words=()
   # Runs of characters with no meaning in their quoting state, taken in one step.
-  # sed commands w/W/e, and the s command's w and e flags (`s/a/b/gw out`).
-  local _re_sed_write='(^|[^A-Za-z])([wW][[:space:]]+[^[:space:]]|e([[:space:];}]|$))|/[gpiImM0-9]*(w[[:space:]]|e([[:space:];}]|$))'
+  # sed commands w/W/e, and the s command's w and e flags after any delimiter
+  # (`s/a/b/gw out`, `s#a#b#gw out`).
+  local _re_sed_write='(^|[^A-Za-z])([wW][[:space:]]+[^[:space:]]|e([[:space:];}]|$))|[^A-Za-z0-9[:space:]][gpiImM0-9]*(w[[:space:]]|e([[:space:];}]|$))'
   local _re_plain="^[^[:space:]'\"\\\`\$;&|<>()]+" _re_sq="^[^']+" _re_dq="^[^\"\\\`\$]+"
+  local _re_comment=$'^#[^\n]*'
   [ "$_n" -gt 0 ] && [ "$_n" -le 1024 ] || return 0
 
   # The _ix_bw_* helpers share this function's locals (bash scoping) and
   # return 1 when they find a possible write.
   while [ "$_i" -lt "$_n" ]; do
+    # A `#` that starts a word starts a comment; the newline still ends the
+    # command. A quote in a comment (`# it's`) must not open a string.
+    if [ -z "$_q" ] && [ "$_hw" -eq 0 ] && [ "${_s:_i:1}" = "#" ]; then
+      [[ "${_s:_i}" =~ $_re_comment ]]
+      _i=$(( _i + ${#BASH_REMATCH[0]} )); continue
+    fi
     case "$_q" in
       "'") [[ "${_s:_i}" =~ $_re_sq ]] ;;
       '"') [[ "${_s:_i}" =~ $_re_dq ]] ;;
@@ -166,7 +180,15 @@ _ix_bw_command_reads() {
   local _k=0 _m=${#_words[@]} _cmd _a
   while [ "$_k" -lt "$_m" ]; do
     _cmd="${_words[_k]}"
-    if [[ "$_cmd" =~ ^[A-Za-z_][A-Za-z0-9_]*\+?= ]]; then _k=$(( _k + 1 )); continue; fi
+    if [[ "$_cmd" =~ ^[A-Za-z_][A-Za-z0-9_]*\+?= ]]; then
+      # These can name the program that runs (`GIT_EXTERNAL_DIFF=./w.sh git diff`).
+      case "$_cmd" in
+        *PAGER=|*PAGER=cat) ;;
+        GIT_*|*PAGER=*|*PAGER+=*|LESS*|LD_*|DYLD_*|PATH[+=]*|BASH_ENV[+=]*|ENV[+=]*|\
+        EDITOR[+=]*|VISUAL[+=]*|SHELL[+=]*|RIPGREP_CONFIG_PATH[+=]*) return 1 ;;
+      esac
+      _k=$(( _k + 1 )); continue
+    fi
     case "$_cmd" in
       '!'|'{'|'}') _k=$(( _k + 1 )) ;;
       time|command)
@@ -194,13 +216,18 @@ _ix_bw_command_reads() {
   local -a _args=("${_words[@]:_k+1}")
 
   case "$_cmd" in
-    cat|head|tail|ls|grep|egrep|fgrep|ag|wc|echo|printf|pwd|cd|cut|tr|nl|\
+    cat|head|tail|ls|grep|egrep|fgrep|wc|echo|printf|pwd|cd|cut|tr|nl|\
     which|type|stat|du|df|more|diff|cmp|jq|true|false|test|'['|'[['|\
     basename|dirname|realpath|readlink|date|whoami|id|uname|column|fold|comm|join|\
     paste|od|hexdump|strings|md5sum|sha1sum|sha256sum)
       return 0 ;;
     # A second file operand is the output file.
     uniq|xxd) _ix_bw_operands_le 1 ;;
+    ag)
+      for _a in ${_args[@]+"${_args[@]}"}; do
+        case "$_a" in --pager|--pager=*) return 1 ;; esac
+      done
+      return 0 ;;
     rg)
       for _a in ${_args[@]+"${_args[@]}"}; do
         case "$_a" in --pre|--pre=*) return 1 ;; esac
@@ -231,7 +258,7 @@ _ix_bw_command_reads() {
       return 0 ;;
     fd)
       for _a in ${_args[@]+"${_args[@]}"}; do
-        case "$_a" in -x|-X|--exec|--exec=*|--exec-batch|--exec-batch=*) return 1 ;; esac
+        case "$_a" in --exec|--exec=*|--exec-batch|--exec-batch=*) return 1 ;; --*) ;; -*[xX]*) return 1 ;; esac
       done
       return 0 ;;
     # The script itself can write: `w file`, `s/a/b/w file`, `W`, or run `e`.
@@ -253,11 +280,12 @@ _ix_bw_command_reads() {
   esac
 }
 
-# Returns 0 when at most N of _args are operands (words not starting with -).
+# Returns 0 when at most N of _args are operands (`-` for stdin, or words not
+# starting with -).
 _ix_bw_operands_le() {
   local _a _ops=0
   for _a in ${_args[@]+"${_args[@]}"}; do
-    case "$_a" in -*) ;; *) _ops=$(( _ops + 1 )) ;; esac
+    case "$_a" in -) _ops=$(( _ops + 1 )) ;; -*) ;; *) _ops=$(( _ops + 1 )) ;; esac
   done
   [ "$_ops" -le "$1" ]
 }

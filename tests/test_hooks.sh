@@ -1561,6 +1561,39 @@ bw_case reads 'file a.bin'
 bw_case reads "sed -E 's/hello world/the end/' a"
 bw_case reads 'rg -n --type ts foo'
 bw_case reads 'git diff --stat HEAD'
+# Rarer write forms: other sed delimiters, `-` as input, combined fd flags, ag's pager.
+bw_case writes "sed 's#a#b#gw out' f"
+bw_case writes "sed 's|a|b|e' f"
+bw_case writes 'xxd -r - out'
+bw_case writes 'uniq - out'
+bw_case writes 'fd -Hx rm'
+bw_case writes 'fd -HX rm'
+bw_case writes 'ag --pager rm x'
+bw_case writes 'ag --pager=./p x'
+bw_case reads "sed 's#a#b#g' f"
+bw_case reads 'uniq -'
+bw_case reads 'cat f | xxd -'
+bw_case reads 'fd -H --exclude node_modules auth'
+bw_case reads 'ag -l foo src'
+# Leading assignments that pick the program that runs.
+bw_case writes 'GIT_EXTERNAL_DIFF=./w.sh git diff'
+bw_case writes "GIT_PAGER='sh -c rm' git log"
+bw_case writes 'PAGER=./x git log'
+bw_case writes "LESSOPEN='|rm x' less f"
+bw_case writes 'PATH=.:$PATH cat f'
+bw_case writes 'RIPGREP_CONFIG_PATH=./rc rg foo'
+bw_case writes 'FOO=1 LD_PRELOAD=./x.so cat f'
+bw_case reads 'GIT_PAGER=cat git log'
+bw_case reads 'PAGER= git log'
+bw_case reads 'LANG=C grep x f'
+# Comments: a quote in one does not open a string, and `#` inside a word is text.
+bw_case writes $'cat f # isn\'t\nsed -i s/a/b/ f # it\'s'
+bw_case writes $'ls # it\'s\necho hi > out'
+bw_case reads $'cat f # isn\'t\ngrep x f # it\'s'
+bw_case reads 'grep x f # > out.txt'
+bw_case reads '# just a comment'
+bw_case reads 'echo a#b'
+bw_case writes 'echo a#b > out'
 # git, everything else.
 bw_case writes 'git commit -m "x"'
 bw_case writes 'git checkout -- a.ts'
