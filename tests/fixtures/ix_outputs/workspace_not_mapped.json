@@ -1,0 +1,4 @@
+{
+  "error": "workspace_not_mapped",
+  "message": "This workspace has not been mapped. Run `ix map` in it first."
+}

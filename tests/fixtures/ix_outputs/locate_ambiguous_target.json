@@ -1,0 +1,8 @@
+{
+  "code": "ambiguous_target",
+  "message": "\"AuthService\" matches 2 entities. Pass a path or a qualified name to choose one.",
+  "candidates": [
+    {"name": "AuthService", "kind": "class", "path": "src/auth.ts"},
+    {"name": "AuthService", "kind": "class", "path": "packages/web/src/auth.ts"}
+  ]
+}

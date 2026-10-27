@@ -165,6 +165,91 @@ run_hook_with_debug_log() {
   check_host_schema "$(basename "${_hook}") < $(basename "${_input}")${*:+ $*}"
 }
 
+# run_hook_with_error_ledger <hook.sh> <fixture_path> [KEY=VAL ...]
+# run_hook_with_debug_log with the error ledger (ix-errors.sh) switched on in a
+# throwaway HOME. Sets _IX_ERROR_LEDGER to its errors.jsonl.
+# ix_capture_async writes from a disowned background subshell, so `9>&1` hands
+# that subshell the end of the $(...) pipe: the substitution returns only once
+# every process the hook started has exited, and the ledger is complete when
+# this returns -- no sleep, no race.
+run_hook_with_error_ledger() {
+  local _hook="${HOOKS_DIR}/$1" _input="$2"; shift 2
+  local _run_tmp; _run_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  mkdir -p "${_run_tmp}/home"
+  _HOOK_EVENT=$(hook_event_for "$(basename "${_hook}")")
+  _IX_DEBUG_LOG="${_run_tmp}/ix-hooks.log"
+  _IX_ERROR_LEDGER="${_run_tmp}/home/.local/share/ix/plugin/errors/errors.jsonl"
+  _RC=0
+  _OUT=$(env \
+    HOME="${_run_tmp}/home" \
+    TMPDIR="${_run_tmp}" \
+    IX_HEALTH_CACHE="${_run_tmp}/ix-healthy" \
+    IX_MAP_DEBOUNCE_FILE="${_run_tmp}/ix-map-last" \
+    IX_MAP_LOCK_PATH="${_run_tmp}/ix-map.lock" \
+    IX_LEDGER_MODE="off" \
+    IX_INGEST_INJECT="off" \
+    IX_ERROR_MODE="local" \
+    IX_DEBUG_LOG="${_IX_DEBUG_LOG}" \
+    "$@" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${_hook}" < "${_input}" 2>/dev/null 9>&1) || _RC=$?
+  check_host_schema "$(basename "${_hook}") < $(basename "${_input}")${*:+ $*}"
+}
+
+# error_ledger_entries — the last run's error-ledger entries, one per line,
+# without the timestamp and with exit_code as "N", sorted: what a run filed,
+# comparable across exit codes.
+error_ledger_entries() {
+  [ -f "${_IX_ERROR_LEDGER:-}" ] || return 0
+  jq -c 'del(.ts) | .exit_code = "N"' "${_IX_ERROR_LEDGER}" 2>/dev/null | sort
+}
+
+# assert_like_exit_1 <label> <hook.sh> <input> "<EXIT vars>" <entries> <miss> [KEY=VAL ...]
+#
+# Ix #853 splits what used to be exit 1 for a graph lookup: 2 ambiguous target,
+# 3 not found, 4 workspace not mapped, each still printing its record on stdout.
+# Runs the hook with every named IX_MOCK_*_EXIT at 1, then at 2, 3 and 4, with
+# the same bodies (KEY=VAL). Each run must exit as exit 1 did, print exactly
+# what it printed, and file the same error-ledger entries -- <entries> of them,
+# so a ledger that stays empty is asserted to be empty, not merely unchanged.
+# With a <miss> prefix ("MISS ix locate exited"), the debug log must also say
+# "<miss> <code> with a body".
+assert_like_exit_1() {
+  local _label="$1" _hook="$2" _input="$3" _vars="$4" _want="$5" _miss="$6"; shift 6
+  local _code _v _env _base_out="" _base_rc=0 _base_ledger="" _ledger _n
+  for _code in 1 2 3 4; do
+    _env=()
+    for _v in ${_vars}; do _env+=("${_v}=${_code}"); done
+    run_hook_with_error_ledger "${_hook}" "${_input}" "$@" "${_env[@]}"
+    _ledger=$(error_ledger_entries)
+    _n=0; [ -z "${_ledger}" ] || _n=$(printf '%s\n' "${_ledger}" | wc -l | tr -d ' ')
+    if [ "${_code}" -eq 1 ]; then
+      _base_out="${_OUT}"; _base_rc="${_RC}"; _base_ledger="${_ledger}"
+      if [ "${_n}" -eq "${_want}" ]; then
+        pass "${_label} (exit 1): files ${_want} ix error(s)"
+      else
+        fail "${_label} (exit 1): files ${_want} ix error(s)" "got ${_n}: ${_ledger:0:200}"
+      fi
+    else
+      if [ "${_RC}" -eq "${_base_rc}" ] && [ "${_OUT}" = "${_base_out}" ]; then
+        pass "${_label} (exit ${_code}): same outcome as exit 1"
+      else
+        fail "${_label} (exit ${_code}): same outcome as exit 1" \
+          "rc ${_RC} vs ${_base_rc}; got: ${_OUT:0:120} — exit 1 gave: ${_base_out:0:120}"
+      fi
+      if [ "${_ledger}" = "${_base_ledger}" ] && [ "${_n}" -eq "${_want}" ]; then
+        pass "${_label} (exit ${_code}): error ledger as for exit 1"
+      else
+        fail "${_label} (exit ${_code}): error ledger as for exit 1" \
+          "got ${_n}: ${_ledger:0:200} — exit 1 filed: ${_base_ledger:0:200}"
+      fi
+    fi
+    if [ -n "${_miss}" ]; then
+      assert_log_contains "${_label} (exit ${_code}): logged as a miss" "${_miss} ${_code} with a body"
+    fi
+  done
+}
+
 # ── Assert helpers ────────────────────────────────────────────────────────────
 
 # Assert exit 0 and no stdout.
@@ -905,6 +990,16 @@ run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
 assert_log_not_contains "intercept/non-zero locate with no body stays a failure" \
   "MISS ix locate exited"
 
+# Ix #853: exits 2, 3 and 4 with their records are a miss, exactly like exit 1.
+# The ambiguous record from `locate` carries `code`, not `error`.
+for _body in locate_ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "intercept/locate ${_body%.json}" ix-intercept.sh "${FX_IN}/grep_plain.json" \
+    IX_MOCK_LOCATE_EXIT 0 "MISS ix locate exited" IX_MOCK_LOCATE_FILE="${FX_IX}/${_body}"
+done
+# The ledger check is live: an empty body is still filed, whatever the code.
+assert_like_exit_1 "intercept/locate with no body" ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_EXIT 1 "" IX_MOCK_LOCATE_FILE=/dev/null
+
 # Glob → inventory → block when result set is manageable
 run_hook ix-intercept.sh "${FX_IN}/glob_path.json"
 assert_additional_context "intercept/glob pattern augments by default" "[ix inventory]"
@@ -918,6 +1013,18 @@ run_hook ix-intercept.sh "${FX_IN}/glob_path_absolute.json" \
   IX_MOCK_EXPECT_INVENTORY_KIND="file" \
   IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/glob absolute path normalized" "Next: ix overview AuthService"
+
+# Ix #853 exit codes on `ix inventory`: a body is an answer, exactly as with
+# exit 1 -- results still augment, an error record stays silent, neither files.
+assert_like_exit_1 "intercept/inventory results" ix-intercept.sh "${FX_IN}/glob_path.json" \
+  IX_MOCK_INVENTORY_EXIT 0 "MISS ix inventory exited"
+assert_additional_context "intercept/inventory results with exit 4 still augment" "[ix inventory]"
+for _body in ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "intercept/inventory ${_body%.json}" ix-intercept.sh "${FX_IN}/glob_path.json" \
+    IX_MOCK_INVENTORY_EXIT 0 "MISS ix inventory exited" IX_MOCK_INVENTORY_FILE="${FX_IX}/${_body}"
+done
+assert_like_exit_1 "intercept/inventory with no body" ix-intercept.sh "${FX_IN}/glob_path.json" \
+  IX_MOCK_INVENTORY_EXIT 1 "" IX_MOCK_INVENTORY_FILE=/dev/null
 
 # Empty / no-tool input → exit 0, no output
 run_hook ix-intercept.sh "${_EMPTY_FIXTURE}"
@@ -965,6 +1072,17 @@ run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_CALLERS_FILE=/dev/null IX_MOCK_CALLERS_EXIT=1
 assert_additional_context "intercept/callers failure keeps the definition" \
   "[ix] \`AuthService\` (class) is defined at src/auth.ts"
+
+# Ix #853 exit codes on `ix callers`: the definition is reported exactly as
+# with exit 1 and the same record, and callers never files an ix error.
+assert_like_exit_1 "intercept/callers results" ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_CALLERS_EXIT 0 ""
+for _body in ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "intercept/callers ${_body%.json}" ix-intercept.sh "${FX_IN}/grep_plain.json" \
+    IX_MOCK_CALLERS_EXIT 0 "" IX_MOCK_CALLERS_FILE="${FX_IX}/${_body}"
+  assert_additional_context "intercept/callers ${_body%.json} with exit 4 keeps the definition" \
+    "[ix] \`AuthService\` (class) is defined at src/auth.ts"
+done
 
 # Structured output format for block mode
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_HOOK_OUTPUT_STYLE=structured IX_BLOCK_ON_HIGH_CONFIDENCE=1
@@ -1034,6 +1152,20 @@ run_hook ix-read.sh "${FX_IN}/read_normal.json" \
   IX_MOCK_OVERVIEW_FILE="${FX_IX}/unresolved_target.json" \
   IX_MOCK_IMPACT_FILE="${FX_IX}/unresolved_target.json"
 assert_empty "read/unresolved target on both commands is silent"
+
+# Ix #853 exit codes on inventory, overview and impact at once: bodies are read
+# exactly as with exit 1, and nothing is filed unless a body is empty.
+_READ_EXITS="IX_MOCK_INVENTORY_EXIT IX_MOCK_OVERVIEW_EXIT IX_MOCK_IMPACT_EXIT"
+assert_like_exit_1 "read/results" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 0 ""
+assert_additional_context "read/results with exit 4 still inject context"
+for _body in ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "read/${_body%.json}" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 0 "" \
+    IX_MOCK_INVENTORY_FILE="${FX_IX}/${_body}" \
+    IX_MOCK_OVERVIEW_FILE="${FX_IX}/${_body}" \
+    IX_MOCK_IMPACT_FILE="${FX_IX}/${_body}"
+done
+assert_like_exit_1 "read/no bodies" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 3 "" \
+  IX_MOCK_INVENTORY_FILE=/dev/null IX_MOCK_OVERVIEW_FILE=/dev/null IX_MOCK_IMPACT_FILE=/dev/null
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-pre-edit.sh — Edit and Write
@@ -1107,6 +1239,19 @@ assert_empty "pre-edit/unresolved target is silent, not an error"
 
 run_hook_with_debug_log ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_MOCK_IMPACT_EXIT=1
 assert_log_contains "pre-edit/logs a miss rather than a failure" "MISS ix impact exited 1 with a body"
+
+# Ix #853 exit codes on `ix impact`: exactly as exit 1 with the same body -- a
+# high-risk record still warns, an error record is silent, neither files.
+assert_like_exit_1 "pre-edit/impact results" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" \
+  IX_MOCK_IMPACT_EXIT 0 "MISS ix impact exited"
+assert_additional_context "pre-edit/impact results with exit 4 still warn"
+for _body in ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "pre-edit/impact ${_body%.json}" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" \
+    IX_MOCK_IMPACT_EXIT 0 "MISS ix impact exited" IX_MOCK_IMPACT_FILE="${FX_IX}/${_body}"
+  assert_empty "pre-edit/impact ${_body%.json} with exit 4 is silent"
+done
+assert_like_exit_1 "pre-edit/impact with no body" ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" \
+  IX_MOCK_IMPACT_EXIT 1 "" IX_MOCK_IMPACT_FILE=/dev/null
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-bash.sh — Bash grep intercept
@@ -1187,6 +1332,16 @@ assert_empty "bash/secret pattern suppressed"
 # ix returns error → graceful degradation → no output
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_FAIL=1
 assert_empty "bash/ix failure degrades gracefully"
+
+# Ix #853 exit codes on `ix locate`: a record is a miss, exactly like exit 1;
+# only an empty body is filed.
+for _body in locate_ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
+  assert_like_exit_1 "bash/locate ${_body%.json}" ix-bash.sh "${_BASH_GREP_FIXTURE}" \
+    IX_MOCK_LOCATE_EXIT 0 "MISS ix locate exited" IX_MOCK_LOCATE_FILE="${FX_IX}/${_body}"
+  assert_empty "bash/locate ${_body%.json} with exit 4 is silent"
+done
+assert_like_exit_1 "bash/locate with no body" ix-bash.sh "${_BASH_GREP_FIXTURE}" \
+  IX_MOCK_LOCATE_EXIT 1 "" IX_MOCK_LOCATE_FILE=/dev/null
 
 # Structured output format
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_HOOK_OUTPUT_STYLE=structured
