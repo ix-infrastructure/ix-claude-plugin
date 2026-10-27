@@ -1,0 +1,8 @@
+{
+  "error": "ambiguous_target",
+  "message": "\"src/auth.ts\" matches 2 entities. Pass a path or a qualified name to choose one.",
+  "candidates": [
+    {"name": "auth.ts", "kind": "file", "path": "src/auth.ts"},
+    {"name": "auth.ts", "kind": "file", "path": "packages/web/src/auth.ts"}
+  ]
+}

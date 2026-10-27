@@ -1,0 +1,7 @@
+{
+  "error": "unresolved_target",
+  "message": "No entity found matching \"AuthServce\".",
+  "suggestions": [
+    {"name": "AuthService", "kind": "class", "path": "src/auth.ts"}
+  ]
+}
