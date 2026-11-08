@@ -1294,16 +1294,68 @@ assert_empty "bash/candidates without one definition stay silent"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
 assert_empty "bash/low confidence stays silent"
 
-# An alternation is a grep expression, not a symbol: nothing in the graph is
-# named `a|b`, so the two ix calls could only come back empty. It must be
-# skipped for THAT reason and not as a suspected secret -- the long snake_case
-# token still has to pass the secret detector (see the lib-level case above).
-run_hook ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
-assert_empty "bash/rg alternation skipped as literal"
+# An alternation of names is split into its names, each looked up on its own
+# (nothing in the graph is named `a|b`). The long snake_case token must not be
+# read as a secret (see the lib-level case above).
+_alt_log="${TEST_TMPDIR}/alt-calls.log"; : > "${_alt_log}"
+run_hook ix-bash.sh "${_BASH_RG_ALT_FIXTURE}" IX_MOCK_CALL_LOG="${_alt_log}"
+assert_additional_context "bash/rg alternation of names answered" "is defined at src/auth.ts"
+if grep -qx "locate ix_ledger_last_turn --format json" "${_alt_log}" && grep -qx "locate ix_ledger_append --format json" "${_alt_log}"; then
+  pass "bash/rg alternation: each name located on its own"
+else
+  fail "bash/rg alternation: each name located on its own" "calls: $(tr '\n' ';' < "${_alt_log}")"
+fi
 
 run_hook_with_debug_log ix-bash.sh "${_BASH_RG_ALT_FIXTURE}"
-assert_log_contains "bash/rg alternation skipped for intent, not as a secret" "SKIP literal intent"
 assert_log_not_contains "bash/rg alternation is not read as a secret" "SKIP looks like secret"
+
+# Claude batches: several greps in one command, basic-regex alternations,
+# `def name`, word boundaries. Every name is found; at most IX_GREP_MAX_NAMES
+# (3) are looked up.
+_BASH_BATCH_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '%s' '{"tool_name":"Bash","session_id":"s-batch","tool_input":{"command":"cd /repo; grep -n \"def build_url\" a.py; grep -rn \"convertParameters\\|parseParameters\" src --include=*.java | head -20; rg -n \"\\bmapCwd\\b\" lib"},"cwd":"/repo"}' \
+  > "${_BASH_BATCH_FIXTURE}"
+_batch_log="${TEST_TMPDIR}/batch-calls.log"; : > "${_batch_log}"
+run_hook ix-bash.sh "${_BASH_BATCH_FIXTURE}" IX_MOCK_CALL_LOG="${_batch_log}"
+assert_additional_context "bash/batched greps answered" "is defined at src/auth.ts"
+_batch_locates=$(grep -c '^locate ' "${_batch_log}" || true)
+if [ "${_batch_locates}" -eq 3 ] && grep -qx "locate build_url --format json" "${_batch_log}" \
+   && grep -qx "locate convertParameters --format json" "${_batch_log}" && grep -qx "locate parseParameters --format json" "${_batch_log}"; then
+  pass "bash/batched greps: def prefix and \\| alternation read, capped at 3 names"
+else
+  fail "bash/batched greps: def prefix and \\| alternation read, capped at 3 names" "calls: $(tr '\n' ';' < "${_batch_log}")"
+fi
+_batch_log2="${TEST_TMPDIR}/batch-calls-4.log"; : > "${_batch_log2}"
+run_hook ix-bash.sh "${_BASH_BATCH_FIXTURE}" IX_MOCK_CALL_LOG="${_batch_log2}" IX_GREP_MAX_NAMES=4
+if grep -qx "locate mapCwd --format json" "${_batch_log2}"; then
+  pass "bash/batched greps: \\b boundaries stripped from a name"
+else
+  fail "bash/batched greps: \\b boundaries stripped from a name" "calls: $(tr '\n' ';' < "${_batch_log2}")"
+fi
+
+# A name answered once in a session is not answered again (same TMPDIR, so the
+# same state dir, and the same session_id).
+_seen_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+_SEEN_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '%s' '{"tool_name":"Bash","session_id":"s-seen","tool_input":{"command":"grep -rn AuthService src"},"cwd":"/repo"}' > "${_SEEN_FIXTURE}"
+_seen_run() {
+  env TMPDIR="${_seen_tmp}" IX_HEALTH_CACHE="${_seen_tmp}/ix-healthy" IX_LEDGER_MODE=off IX_INGEST_INJECT=off IX_ERROR_MODE=off \
+    PATH="${TESTS_DIR}:${PATH}" bash "${HOOKS_DIR}/ix-bash.sh" < "${_SEEN_FIXTURE}" 2>/dev/null || true
+}
+_first=$(_seen_run); _second=$(_seen_run)
+if printf '%s' "${_first}" | grep -q "is defined at" && [ -z "${_second}" ]; then
+  pass "bash/a name is answered once per session"
+else
+  fail "bash/a name is answered once per session" "first: ${_first:0:80} second: ${_second:0:80}"
+fi
+
+# Phrases, log lines and regexes with structure are not names: silent.
+for _cmd in 'grep -rn \"could not resolve\" src' 'grep -n \"TODO\" a.py' 'rg -n \"foo.*bar\" src' 'grep -rn \"ab\" src'; do
+  _PHRASE_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"/repo"}' "${_cmd}" > "${_PHRASE_FIXTURE}"
+  run_hook ix-bash.sh "${_PHRASE_FIXTURE}"
+  assert_empty "bash/not a name stays silent: ${_cmd}"
+done
 
 # wrapped cd && rg command should still be intercepted
 run_hook ix-bash.sh "${_BASH_CD_RG_FIXTURE}"
@@ -1906,6 +1958,18 @@ done
 run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on \
   IX_ANNOTATE_MODE=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
 assert_additional_context "start/IX_BRIEFING_TOOL_HINT=on keeps the hint" "${_TOOL_HINT}"
+
+# =steps: the same commands, as steps tied to moments in the task.
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=steps \
+  IX_ANNOTATE_MODE=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+assert_additional_context "start/IX_BRIEFING_TOOL_HINT=steps keeps the start points" "[ix] Starting points for this task"
+assert_additional_context "start/IX_BRIEFING_TOOL_HINT=steps: callers step" "Before you search for where a function, class or method named above is used: run \`ix callers <name>\`"
+assert_additional_context "start/IX_BRIEFING_TOOL_HINT=steps: impact step" "Before you edit one: run \`ix impact <name>\`"
+if printf '%s' "$(_start_ctx)" | grep -q "cheaper than repeated grep"; then
+  fail "start/IX_BRIEFING_TOOL_HINT=steps replaces the preference line" "got: ${_OUT}"
+else
+  pass "start/IX_BRIEFING_TOOL_HINT=steps replaces the preference line"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-annotate.sh — Stop hook attribution

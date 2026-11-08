@@ -162,8 +162,12 @@ if [ -n "$_start_points" ]; then
   # hidden from the model (#53) nothing else tells it, and it never ran ix on
   # its own. Only here, beside start points it already gets: a session with no
   # start points pays nothing. IX_BRIEFING_TOOL_HINT=off (or 0/false) drops it.
+  # =steps words it as steps tied to moments in the task instead of a
+  # preference: Claude has not been seen following "prefer ix" advice, but it
+  # does run ix checks that its instructions spell out as steps.
   case "${IX_BRIEFING_TOOL_HINT:-on}" in
     off|0|false) ;;
+    steps) _context="${_context}"$'\n'"Ix answers in this shell (read-only, one call each):"$'\n'"- Before you search for where a function, class or method named above is used: run \`ix callers <name>\` (its call sites, with file:line)."$'\n'"- Before you edit one: run \`ix impact <name>\` (what depends on it)."$'\n'"- To find where a name is defined: \`ix locate <name>\`."$'\n'"If ix has no answer for a name, grep as usual." ;;
     *) _context="${_context}"$'\n'"Ix also answers in this shell: ix callers <symbol> / ix impact <symbol> (who uses it, what breaks if it changes), ix locate <name> (where it is defined). Read-only; cheaper than repeated grep for common names." ;;
   esac
   ix_ledger_append "UserPromptSubmit" "StartPoints" "${#_context}" "context" "1" "" "0" \
