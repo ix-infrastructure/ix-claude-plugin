@@ -1299,7 +1299,8 @@ assert_empty "bash/low confidence stays silent"
 # read as a secret (see the lib-level case above).
 _alt_log="${TEST_TMPDIR}/alt-calls.log"; : > "${_alt_log}"
 run_hook ix-bash.sh "${_BASH_RG_ALT_FIXTURE}" IX_MOCK_CALL_LOG="${_alt_log}"
-assert_additional_context "bash/rg alternation of names answered" "is defined at src/auth.ts"
+# The mock resolves every name to AuthService: another name, so nothing is said.
+assert_empty "bash/rg alternation: a definition with another name is not an answer"
 if grep -qx "locate ix_ledger_last_turn --format json" "${_alt_log}" && grep -qx "locate ix_ledger_append --format json" "${_alt_log}"; then
   pass "bash/rg alternation: each name located on its own"
 else
@@ -1313,14 +1314,14 @@ assert_log_not_contains "bash/rg alternation is not read as a secret" "SKIP look
 # `def name`, word boundaries. Every name is found; at most IX_GREP_MAX_NAMES
 # (3) are looked up.
 _BASH_BATCH_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
-printf '%s' '{"tool_name":"Bash","session_id":"s-batch","tool_input":{"command":"cd /repo; grep -n \"def build_url\" a.py; grep -rn \"convertParameters\\|parseParameters\" src --include=*.java | head -20; rg -n \"\\bmapCwd\\b\" lib"},"cwd":"/repo"}' \
+printf '%s' '{"tool_name":"Bash","session_id":"s-batch","tool_input":{"command":"cd /repo; grep -n \"def build_url\" a.py; grep -rn \"convertParameters\\|AuthService\" src --include=*.java | head -20; rg -n \"\\bmapCwd\\b\" lib"},"cwd":"/repo"}' \
   > "${_BASH_BATCH_FIXTURE}"
 _batch_log="${TEST_TMPDIR}/batch-calls.log"; : > "${_batch_log}"
 run_hook ix-bash.sh "${_BASH_BATCH_FIXTURE}" IX_MOCK_CALL_LOG="${_batch_log}"
 assert_additional_context "bash/batched greps answered" "is defined at src/auth.ts"
 _batch_locates=$(grep -c '^locate ' "${_batch_log}" || true)
 if [ "${_batch_locates}" -eq 3 ] && grep -qx "locate build_url --format json" "${_batch_log}" \
-   && grep -qx "locate convertParameters --format json" "${_batch_log}" && grep -qx "locate parseParameters --format json" "${_batch_log}"; then
+   && grep -qx "locate convertParameters --format json" "${_batch_log}" && grep -qx "locate AuthService --format json" "${_batch_log}"; then
   pass "bash/batched greps: def prefix and \\| alternation read, capped at 3 names"
 else
   fail "bash/batched greps: def prefix and \\| alternation read, capped at 3 names" "calls: $(tr '\n' ';' < "${_batch_log}")"
@@ -1331,6 +1332,23 @@ if grep -qx "locate mapCwd --format json" "${_batch_log2}"; then
   pass "bash/batched greps: \\b boundaries stripped from a name"
 else
   fail "bash/batched greps: \\b boundaries stripped from a name" "calls: $(tr '\n' ';' < "${_batch_log2}")"
+fi
+
+# locate matches case-insensitively: a grep for the word `authservice` must not
+# be answered with the class `AuthService`. Two names resolving to the same
+# definition (`AuthService`, `Auth.AuthService`) give one line.
+_CASE_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep -rn authservice src"},"cwd":"/repo"}' > "${_CASE_FIXTURE}"
+run_hook ix-bash.sh "${_CASE_FIXTURE}"
+assert_empty "bash/a case-insensitive match is not an answer"
+_DUP_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep -rn \"AuthService\\|Auth.AuthService\" src"},"cwd":"/repo"}' > "${_DUP_FIXTURE}"
+run_hook ix-bash.sh "${_DUP_FIXTURE}"
+assert_additional_context "bash/same definition from two names: answered" "is defined at src/auth.ts"
+if [ "$(printf '%s' "${_OUT}" | grep -o 'is defined at' | wc -l)" -eq 1 ]; then
+  pass "bash/same definition from two names: one line"
+else
+  fail "bash/same definition from two names: one line" "got: ${_OUT}"
 fi
 
 # A name answered once in a session is not answered again (same TMPDIR, so the

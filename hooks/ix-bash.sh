@@ -172,6 +172,22 @@ while IFS= read -r PATTERN; do
   [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate for '${PATTERN}'"; continue; }
   ix_definition_context "$_LOC_RAW"
   [ -z "$DEF_PART" ] && { ix_log "SKIP no single confident definition for '${PATTERN}' — grep answers alone"; continue; }
+  # Only the name searched for, as spelled: locate matches case-insensitively,
+  # so a grep for the word `parameters` would otherwise be answered with the
+  # class `Parameters`. For Owner.name, the definition is named `name`.
+  _resolved=$(printf '%s' "$DEF_PART" | sed -E 's/^\[ix\] `([^`]+)`.*/\1/')
+  if [ "$_resolved" != "$PATTERN" ] && [ "$_resolved" != "${PATTERN##*.}" ]; then
+    ix_log "SKIP '${PATTERN}' resolved to '${_resolved}', another name"
+    continue
+  fi
+  # One line per definition, in this command and in the session.
+  _def_key=$(printf '%s' "$DEF_PART" | sed -E 's/; (called from|the graph has).*//')
+  if printf '%s\n' "$CONTEXT" | grep -qF "$_def_key" \
+     || { [ -n "$_SEEN_FILE" ] && [ -f "$_SEEN_FILE" ] && grep -qxF "def:${_def_key}" "$_SEEN_FILE" 2>/dev/null; }; then
+    ix_log "SKIP '${PATTERN}' already answered as the same definition"
+    continue
+  fi
+  [ -n "$_SEEN_FILE" ] && printf 'def:%s\n' "$_def_key" >> "$_SEEN_FILE" 2>/dev/null || true
   CONTEXT="${CONTEXT:+${CONTEXT}$'\n'}${DEF_PART}"
   ANSWERED="${ANSWERED:+${ANSWERED},}${PATTERN}"
   [ -n "$_SEEN_FILE" ] && printf '%s\n' "$PATTERN" >> "$_SEEN_FILE" 2>/dev/null || true
