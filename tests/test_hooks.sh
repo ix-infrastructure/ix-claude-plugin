@@ -1052,7 +1052,7 @@ assert_additional_context "intercept/block escape hatch augments" "is defined at
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
 assert_additional_context "intercept/callers at their call sites" \
   "src/app.ts:14 \`const auth = new AuthService(config);\`"
-assert_additional_context "intercept/callers beyond three are counted" "(+1 more)"
+assert_additional_context "intercept/callers beyond three are counted" "(+1 more: \`ix callers AuthService\` lists all 4)"
 if printf '%s' "${_OUT}" | grep -q "api/session.ts.*src/app.ts"; then
   fail "intercept/callers in the definition's directory lead" "got: ${_OUT}"
 else
@@ -1377,6 +1377,17 @@ if printf '%s' "${_first}" | grep -q "is defined at" && [ -z "${_second}" ]; the
   pass "bash/a name is answered once per session"
 else
   fail "bash/a name is answered once per session" "first: ${_first:0:80} second: ${_second:0:80}"
+fi
+
+# The definition's first line is part of the answer when its file is there.
+_sig_dir=$(mktemp -d -p "${TEST_TMPDIR}"); mkdir -p "${_sig_dir}/src"
+printf '%s\n' '// auth' '' 'export class AuthService extends   Base {' '  constructor() {}' > "${_sig_dir}/src/auth.ts"
+_sig_out=$(cd "${_sig_dir}" && env TMPDIR="${_sig_dir}" IX_HEALTH_CACHE="${_sig_dir}/h" IX_LEDGER_MODE=off IX_INGEST_INJECT=off IX_ERROR_MODE=off \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_resolved_lines.json" PATH="${TESTS_DIR}:${PATH}" bash "${HOOKS_DIR}/ix-bash.sh" < "${_BASH_GREP_FIXTURE}" 2>/dev/null || true)
+if printf '%s' "${_sig_out}" | grep -qF 'is defined at src/auth.ts:3-9 `export class AuthService extends Base {`'; then
+  pass "bash/answer carries the definition's first line"
+else
+  fail "bash/answer carries the definition's first line" "got: ${_sig_out:0:300}"
 fi
 
 # Phrases, log lines and regexes with structure are not names: silent.

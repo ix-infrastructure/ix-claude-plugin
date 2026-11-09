@@ -740,6 +740,13 @@ ix_definition_context() {
     [ -n "$_end" ] && [ "$_end" != "$_start" ] && _where="${_where}-${_end}"
   fi
   DEF_PART="[ix] \`${_name}\` (${_kind}) is defined at ${_where}"
+  # Its first line, so the answer shows what the definition is without a read:
+  # bare locations made agents open every file they named.
+  if [ -n "$_start" ] && [ -f "$_path" ]; then
+    local _sig
+    _sig=$(sed -n "${_start}p" "$_path" 2>/dev/null | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//' | cut -c1-120)
+    [ -n "$_sig" ] && DEF_PART="${DEF_PART} \`${_sig//\`/\'}\`"
+  fi
 
   ix_log_command ix callers "$_name" --format json
   _cal_raw=$(ix_run_bounded "${IX_CALLERS_TIMEOUT:-4}" ix callers "$_name" --format json 2>/dev/null) || true
@@ -754,13 +761,13 @@ ix_definition_context() {
   _dir=$(dirname "$_path")
   _sites=$(echo "$_cal_json" | jq -r --arg dir "$_dir/" '
     [.results[]? | {p: (.site.path // .path // ""), l: (.site.line // .lineStart // ""),
-                    s: ((.site.snippet // .name // "") | gsub("\\s+"; " ") | .[0:60])}]
+                    s: ((.site.snippet // .name // "") | gsub("\\s+"; " ") | .[0:100])}]
     | sort_by(if (.p | startswith($dir)) then 0 else 1 end)
     | .[:3] | map(.p + ":" + (.l | tostring) + " `" + .s + "`") | join(" · ")' 2>/dev/null || echo "")
   _more=$(( _total > 3 ? _total - 3 : 0 ))
   if [ -n "$_sites" ]; then
     DEF_PART="${DEF_PART}; called from ${_total} place$([ "$_total" -eq 1 ] || echo s): ${_sites}"
-    [ "$_more" -gt 0 ] && DEF_PART="${DEF_PART} (+${_more} more)"
+    [ "$_more" -gt 0 ] && DEF_PART="${DEF_PART} (+${_more} more: \`ix callers ${_name}\` lists all ${_total})"
   fi
   return 0
 }
