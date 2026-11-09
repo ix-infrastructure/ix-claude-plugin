@@ -1351,6 +1351,18 @@ else
   fail "bash/same definition from two names: one line" "got: ${_OUT}"
 fi
 
+# The cap goes to the names most likely to be one definition: a Type name
+# listed last is looked up before fields and plain words listed first.
+_ORDER_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep -rn \"formattedColon\\|separator\\|newline\\|FormattingStyle\" gson"},"cwd":"/repo"}' > "${_ORDER_FIXTURE}"
+_order_log="${TEST_TMPDIR}/order-calls.log"; : > "${_order_log}"
+run_hook ix-bash.sh "${_ORDER_FIXTURE}" IX_MOCK_CALL_LOG="${_order_log}" IX_GREP_MAX_NAMES=2
+if [ "$(grep '^locate ' "${_order_log}" | head -2 | tr '\n' ';')" = "locate FormattingStyle --format json;locate formattedColon --format json;" ]; then
+  pass "bash/Type names first, then camelCase, then words"
+else
+  fail "bash/Type names first, then camelCase, then words" "calls: $(tr '\n' ';' < "${_order_log}")"
+fi
+
 # A name answered once in a session is not answered again (same TMPDIR, so the
 # same state dir, and the same session_id).
 _seen_tmp=$(mktemp -d -p "${TEST_TMPDIR}")

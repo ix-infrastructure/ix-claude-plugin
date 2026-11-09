@@ -123,6 +123,14 @@ while IFS= read -r _search; do
   NAMES="${NAMES}$(_names_of "$PATTERN")"$'\n'
 done <<< "$SEARCH_CMDS"
 NAMES=$(printf '%s\n' "$NAMES" | awk 'NF && !seen[$0]++')
+# Most likely to be one definition first, so the name cap is not spent on
+# fields and words: Type names (PascalCase, Owner.name), then camelCase and
+# snake_case names, then plain words. Stable within each group.
+NAMES=$(printf '%s\n' "$NAMES" | awk '
+  /^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/ { print 0 "\t" NR "\t" $0; next }
+  /[a-z][A-Z]|_/                                              { print 1 "\t" NR "\t" $0; next }
+                                                              { print 2 "\t" NR "\t" $0 }' \
+  | sort -t "$(printf '\t')" -k1,1n -k2,2n | cut -f3)
 if [ -z "$NAMES" ]; then
   ix_log "SKIP literal intent — shell grep will run"
   exit 0
