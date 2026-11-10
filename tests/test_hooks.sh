@@ -570,6 +570,53 @@ else
   pass "briefing/modelSuffix still asks for the Ix section"
 fi
 
+# Line breaks reach the model as line breaks. "\n" inside ordinary quotes is a
+# backslash and an n in bash, and jq --arg kept both, so the header ran into the
+# first briefing line and the attribution rules arrived as one line strewn with
+# visible \n markers (#58). The header matters on every channel, including
+# systemMessage (the default); the attribution rules only on modelSuffix/both.
+_nl=$'\n'
+for _ch in systemMessage modelSuffix both; do
+  _RC=0
+  _OUT=$(env \
+    TMPDIR="$(mktemp -d -p "${TEST_TMPDIR}")" \
+    IX_LEDGER_MODE="off" \
+    IX_INGEST_INJECT="off" \
+    IX_ERROR_MODE="off" \
+    IX_ANNOTATE_MODE="brief" \
+    IX_ANNOTATE_CHANNEL="${_ch}" \
+    PATH="${TESTS_DIR}:${PATH}" \
+    bash "${HOOKS_DIR}/ix-briefing.sh" < "${_USER_PROMPT_FIXTURE}" 2>/dev/null) || _RC=$?
+  _HOOK_EVENT="UserPromptSubmit"
+  check_host_schema "ix-briefing.sh IX_ANNOTATE_CHANNEL=${_ch} line breaks"
+  _ctx=$(echo "${_OUT}" | jq -r 'select(.hookSpecificOutput.hookEventName == "UserPromptSubmit") | .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
+  if [ -z "${_ctx}" ]; then
+    fail "briefing/${_ch}/no literal backslash-n in the context" "expected additionalContext, got: ${_OUT:0:120}"
+  elif [[ "${_ctx}" == *'\n'* ]]; then
+    fail "briefing/${_ch}/no literal backslash-n in the context" "found backslash-n: $(printf '%s' "${_ctx}" | grep -o '.\{0,30\}\\n.\{0,30\}' | head -3 | tr '\n' '|')"
+  else
+    pass "briefing/${_ch}/no literal backslash-n in the context"
+  fi
+  if [[ "${_ctx}" == *"[ix] Session briefing:${_nl}Ix Briefing${_nl}"* ]]; then
+    pass "briefing/${_ch}/header and briefing are on separate lines"
+  else
+    fail "briefing/${_ch}/header and briefing are on separate lines" "context starts: ${_ctx:0:80}"
+  fi
+  if [ "${_ch}" = "systemMessage" ]; then
+    if [[ "${_ctx}" == *'[ix meta] Attribution:'* ]]; then
+      fail "briefing/${_ch}/no attribution instruction" "attribution instruction present on systemMessage"
+    else
+      pass "briefing/${_ch}/no attribution instruction"
+    fi
+  elif [[ "${_ctx}" == *"${_nl}[ix meta] Attribution:"* ]] \
+      && [[ "${_ctx}" == *"nothing after it:${_nl}Ix${_nl}- <short bullet"* ]] \
+      && [[ "${_ctx}" == *"${_nl}Example:${_nl}Ix${_nl}- surfaced symbol matches before search${_nl}- flagged edit blast radius before modification" ]]; then
+    pass "briefing/${_ch}/attribution instruction is on its own lines"
+  else
+    fail "briefing/${_ch}/attribution instruction is on its own lines" "instruction not split into lines: ${_ctx: -160}"
+  fi
+done
+
 run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 # The pro probe must run the real command. `ix briefing --help` exits 0 even
 # when only the Pro *stub* is registered, so probing with it reported Pro as
@@ -2058,7 +2105,7 @@ _annotate_edit_home="${_annotate_edit_tmp}/home"
 mkdir -p "${_annotate_edit_home}"
 
 _seed_edit_rc=0
-_OUT=$(env \
+env \
   HOME="${_annotate_edit_home}" \
   TMPDIR="${_annotate_edit_tmp}" \
   IX_HEALTH_CACHE="${_annotate_edit_tmp}/ix-healthy" \
@@ -2066,7 +2113,7 @@ _OUT=$(env \
   IX_LEDGER_MODE="on" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash "${HOOKS_DIR}/ix-pre-edit.sh" < "${FX_IN}/edit_high_risk.json" >/dev/null 2>/dev/null) || _seed_edit_rc=$?
+  bash "${HOOKS_DIR}/ix-pre-edit.sh" < "${FX_IN}/edit_high_risk.json" >/dev/null 2>/dev/null || _seed_edit_rc=$?
 
 if [ "${_seed_edit_rc}" -ne 0 ]; then
   fail "annotate/seed edit ledger" "expected pre-edit hook to succeed, got ${_seed_edit_rc}"
@@ -2089,7 +2136,7 @@ _annotate_low_home="${_annotate_low_tmp}/home"
 mkdir -p "${_annotate_low_home}"
 
 _seed_low_rc=0
-_OUT=$(env \
+env \
   HOME="${_annotate_low_home}" \
   TMPDIR="${_annotate_low_tmp}" \
   IX_HEALTH_CACHE="${_annotate_low_tmp}/ix-healthy" \
@@ -2098,7 +2145,7 @@ _OUT=$(env \
   IX_ERROR_MODE="off" \
   IX_MOCK_IMPACT_FILE="${FX_IX}/impact_low.json" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash "${HOOKS_DIR}/ix-pre-edit.sh" < "${FX_IN}/edit_high_risk.json" >/dev/null 2>/dev/null) || _seed_low_rc=$?
+  bash "${HOOKS_DIR}/ix-pre-edit.sh" < "${FX_IN}/edit_high_risk.json" >/dev/null 2>/dev/null || _seed_low_rc=$?
 
 if [ "${_seed_low_rc}" -ne 0 ]; then
   fail "annotate/seed low-risk edit ledger" "expected low-risk pre-edit hook to succeed, got ${_seed_low_rc}"

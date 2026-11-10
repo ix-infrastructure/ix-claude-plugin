@@ -37,7 +37,9 @@ _mode="${IX_ANNOTATE_MODE:-brief}"
 _annotation_instruction=""
 
 if [ "$_mode" != "off" ] && { [ "$_channel" = "modelSuffix" ] || [ "$_channel" = "both" ]; }; then
-  _annotation_instruction='[ix meta] Attribution: if you received any lines starting with [ix] since the last user message, you must end your response with exactly this final structure and nothing after it:\nIx\n- <short bullet about how ix was used>\n- <optional second short bullet about what ix helped with>\nRules:\n- Use the heading exactly: Ix\n- Use 1 or 2 markdown bullets only\n- Do not write a prose paragraph\n- Do not put anything after the Ix section\n- Each bullet must be short, factual, and derived only from the [ix] lines you actually saw this turn\n- Do not mention search, read, edit, or session context unless it actually happened\n- Do not add an Ix section if you received no [ix] lines this turn\nExample:\nIx\n- surfaced symbol matches before search\n- flagged edit blast radius before modification'
+  # $'...' so each \n is a line break; in plain quotes it reached the model as
+  # a backslash and an n (#58).
+  _annotation_instruction=$'[ix meta] Attribution: if you received any lines starting with [ix] since the last user message, you must end your response with exactly this final structure and nothing after it:\nIx\n- <short bullet about how ix was used>\n- <optional second short bullet about what ix helped with>\nRules:\n- Use the heading exactly: Ix\n- Use 1 or 2 markdown bullets only\n- Do not write a prose paragraph\n- Do not put anything after the Ix section\n- Each bullet must be short, factual, and derived only from the [ix] lines you actually saw this turn\n- Do not mention search, read, edit, or session context unless it actually happened\n- Do not add an Ix section if you received no [ix] lines this turn\nExample:\nIx\n- surfaced symbol matches before search\n- flagged edit blast radius before modification'
 fi
 
 _briefing_fresh=0
@@ -170,7 +172,7 @@ if [ -n "$_start_points" ]; then
     "pointed at the files Ix trusts as starting points for the task."
 fi
 if [ -n "$BRIEFING" ]; then
-  _briefing_block="[ix] Session briefing:\n${BRIEFING}"
+  _briefing_block="[ix] Session briefing:"$'\n'"${BRIEFING}"
   if [ -n "$_context" ]; then
     _context="${_context}"$'\n'"${_briefing_block}"
   else
@@ -181,7 +183,7 @@ if [ -n "$BRIEFING" ]; then
 fi
 [ -n "$_annotation_instruction" ] && {
   if [ -n "$_context" ]; then
-    _context="${_context}\n${_annotation_instruction}"
+    _context="${_context}"$'\n'"${_annotation_instruction}"
   else
     _context="${_annotation_instruction}"
   fi
