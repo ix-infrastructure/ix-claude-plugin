@@ -570,6 +570,44 @@ else
   pass "briefing/modelSuffix still asks for the Ix section"
 fi
 
+# Line breaks reach the model as line breaks. "\n" inside ordinary quotes is a
+# backslash and an n in bash, and jq --arg kept both, so the header ran into the
+# first briefing line and the attribution rules arrived as one line strewn with
+# visible \n markers (#58).
+_RC=0
+_OUT=$(env \
+  TMPDIR="$(mktemp -d -p "${TEST_TMPDIR}")" \
+  IX_LEDGER_MODE="off" \
+  IX_INGEST_INJECT="off" \
+  IX_ERROR_MODE="off" \
+  IX_ANNOTATE_MODE="brief" \
+  IX_ANNOTATE_CHANNEL="both" \
+  PATH="${TESTS_DIR}:${PATH}" \
+  bash "${HOOKS_DIR}/ix-briefing.sh" < "${_USER_PROMPT_FIXTURE}" 2>/dev/null) || _RC=$?
+_HOOK_EVENT="UserPromptSubmit"
+check_host_schema "ix-briefing.sh IX_ANNOTATE_CHANNEL=both"
+_ctx=$(echo "${_OUT}" | jq -r 'select(.hookSpecificOutput.hookEventName == "UserPromptSubmit") | .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
+_nl=$'\n'
+if [ -z "${_ctx}" ]; then
+  fail "briefing/no literal backslash-n in the context" "expected additionalContext, got: ${_OUT:0:120}"
+elif [[ "${_ctx}" == *'\n'* ]]; then
+  fail "briefing/no literal backslash-n in the context" "found backslash-n: $(printf '%s' "${_ctx}" | grep -o '.\{0,30\}\\n.\{0,30\}' | head -3 | tr '\n' '|')"
+else
+  pass "briefing/no literal backslash-n in the context"
+fi
+if [[ "${_ctx}" == *"[ix] Session briefing:${_nl}Ix Briefing${_nl}"* ]]; then
+  pass "briefing/header and briefing are on separate lines"
+else
+  fail "briefing/header and briefing are on separate lines" "context starts: ${_ctx:0:80}"
+fi
+if [[ "${_ctx}" == *"${_nl}[ix meta] Attribution:"* ]] \
+    && [[ "${_ctx}" == *"nothing after it:${_nl}Ix${_nl}- <short bullet"* ]] \
+    && [[ "${_ctx}" == *"${_nl}Example:${_nl}Ix${_nl}- surfaced symbol matches before search${_nl}- flagged edit blast radius before modification" ]]; then
+  pass "briefing/attribution instruction is on its own lines"
+else
+  fail "briefing/attribution instruction is on its own lines" "instruction not split into lines: ${_ctx: -160}"
+fi
+
 run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
 # The pro probe must run the real command. `ix briefing --help` exits 0 even
 # when only the Pro *stub* is registered, so probing with it reported Pro as
