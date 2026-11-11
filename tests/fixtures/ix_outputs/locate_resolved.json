@@ -1,9 +1,13 @@
 {
   "resolvedTarget": {
-    "name": "AuthService",
+    "id": "6f1c2a9e-3b7d-4e21-9a4c-0d5e8b7f1a23",
     "kind": "class",
-    "path": "src/auth.ts",
-    "confidence": 0.95
+    "name": "AuthService",
+    "path": "src/auth.ts"
   },
-  "confidence": 0.95
+  "lineRange": {"start": 3, "end": 20},
+  "container": null,
+  "systemPath": [],
+  "diagnostics": [],
+  "hasMapData": true
 }
