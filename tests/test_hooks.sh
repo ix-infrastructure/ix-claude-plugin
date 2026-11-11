@@ -3022,6 +3022,75 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Repo docs: what ships with the plugin, and what it claims exists
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything in the repo root is installed with the plugin. The root keeps one
+# user document (README.md), one contributor document (CLAUDE.md) and the
+# changelog; a design note or task breakdown there ships to every user and
+# drifts from the hooks. And no current document may name an IX_* switch or a
+# hook script the code does not have. CHANGELOG.md is history: it may name
+# what was removed, and switches the Ix CLI itself reads.
+section "Repo docs"
+
+_REPO_DIR="$(cd "${TESTS_DIR}/.." && pwd)"
+
+_root_docs=$(cd "${_REPO_DIR}" && find . -maxdepth 1 -type f -iname '*.md' | sed 's|^\./||' | sort | tr '\n' ' ')
+if [ "${_root_docs}" = "CHANGELOG.md CLAUDE.md README.md " ]; then
+  pass "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only"
+else
+  fail "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only" "found: ${_root_docs}"
+fi
+
+# Current docs: every *.md outside .git, minus the changelog.
+_doc_files=()
+while IFS= read -r -d '' _f; do
+  _doc_files+=("${_f}")
+done < <(find "${_REPO_DIR}" -path "${_REPO_DIR}/.git" -prune -o -type f -name '*.md' \
+  ! -path "${_REPO_DIR}/CHANGELOG.md" -print0)
+# Where a switch can really live: the hook code (tests/test_hooks.sh still
+# sets a few switches no hook reads any more, so it does not count), or, for
+# the IX_MOCK_* knobs, the ix stub.
+_code_files=()
+while IFS= read -r -d '' _f; do
+  _code_files+=("${_f}")
+done < <(find "${HOOKS_DIR}" -type f ! -name '*.md' -print0)
+
+_missing_vars=""
+for _v in $(grep -ohE '\bIX_[A-Z0-9_]+' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  case "${_v}" in
+    IX_MOCK_*) grep -qw -- "${_v}" "${TESTS_DIR}/mock-ix.sh" ;;
+    *) grep -qw -- "${_v}" "${_code_files[@]}" ;;
+  esac 2>/dev/null || _missing_vars="${_missing_vars} ${_v}"
+done
+if [ -z "${_missing_vars}" ]; then
+  pass "docs/every IX_* variable a doc names exists in the hooks"
+else
+  fail "docs/every IX_* variable a doc names exists in the hooks" "missing:${_missing_vars}"
+fi
+
+_missing_hooks=""
+for _h in $(grep -ohE '\bix-[a-z0-9-]+\.sh\b' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  [ -f "${_REPO_DIR}/hooks/${_h}" ] || [ -f "${_REPO_DIR}/tests/${_h}" ] \
+    || _missing_hooks="${_missing_hooks} ${_h}"
+done
+if [ -z "${_missing_hooks}" ]; then
+  pass "docs/every ix-*.sh a doc names exists"
+else
+  fail "docs/every ix-*.sh a doc names exists" "missing:${_missing_hooks}"
+fi
+
+# Every hook hooks.json registers is named in README.md's hook table.
+_unlisted=""
+for _h in $(jq -r '.. | .command? // empty' "${HOOKS_DIR}/hooks.json" | sed 's|.*/||' | sort -u); do
+  grep -q -- "\`${_h}\`" "${_REPO_DIR}/README.md" || _unlisted="${_unlisted} ${_h}"
+done
+if [ -z "${_unlisted}" ]; then
+  pass "docs/README.md names every hook hooks.json registers"
+else
+  fail "docs/README.md names every hook hooks.json registers" "unlisted:${_unlisted}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════\n'
