@@ -74,8 +74,11 @@ if [ "$TOOL" = "Grep" ]; then
   ix_log "RESULTS text='${TEXT_PART:-<none>}' locate='${LOC_PART:-<none>}'"
 
   # Gate on how locate resolved: only one definition the CLI picked itself (an
-  # exact or preferred-kind resolutionMode) may be injected or deny the Grep
-  # (ix_locate_confident; `ix locate` prints no confidence score).
+  # exact or preferred-kind resolutionMode) may be injected
+  # (ix_locate_confident; `ix locate` prints no confidence score). The opt-in
+  # deny is narrower still: only an exact name match (no resolutionMode, or
+  # `exact`). preferred-kind can be a near-exact score rather than the name the
+  # user typed, which is enough for a hint but not for costing them a turn.
   HOOK_MODE="allow"
   _loc_type=""
   _loc_name=""
@@ -89,7 +92,7 @@ if [ "$TOOL" = "Grep" ]; then
       _loc_name=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.name // ""' 2>/dev/null || echo "")
       _loc_path=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.path // ""' 2>/dev/null || echo "")
       if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
-         [ "$_loc_resolved" = "1" ]; then
+         [ "$_loc_resolved" = "1" ] && { [ -z "${LOC_MODE:-}" ] || [ "$LOC_MODE" = "exact" ]; }; then
         HOOK_MODE="block"
       fi
       ix_log "RESOLUTION resolved=${_loc_resolved} mode=${LOC_MODE:-<none>} → hook=$HOOK_MODE"

@@ -1184,14 +1184,22 @@ run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_empty "intercept/scored locate is never denied"
 # preferred-kind is one target the CLI resolved itself (an exact-name tie broken
-# by kind, or a near-exact score): injected, and denied when asked to.
+# by kind, or a near-exact score): injected, but never denied, because a
+# near-exact score is not the name the user typed.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"
 assert_additional_context "intercept/preferred-kind locate augments" \
   "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
-assert_block_decision "intercept/preferred-kind locate blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+assert_additional_context "intercept/preferred-kind locate augments, not denied, when the deny is on" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
+# An explicit `exact` mode is denied like the missing mode (the default fixture).
+_LOCATE_EXACT_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '. + {resolutionMode: "exact"}' "${FX_IX}/locate_resolved.json" > "${_LOCATE_EXACT_FIXTURE}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_EXACT_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/exact-mode locate blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
 # Nor does an ambiguous match deny the Grep, in either release's shape.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1

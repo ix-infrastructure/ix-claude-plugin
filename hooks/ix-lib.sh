@@ -552,18 +552,23 @@ ix_confidence_gate() {
 #
 # `ix locate` prints no confidence score, so the hooks used to read a
 # `confidence` that was never there, default it to 1 and pass every resolution.
-# resolutionMode is the signal the CLI does print. Its values (Ix CLI 0.12.1:
-# exact, preferred-kind, scored, ambiguous, heuristic; later releases add
-# fuzzy) are read as:
-#   (no key)        an exact name match -- the CLI omits the mode for these
+# resolutionMode is the signal the CLI does print. The values below are those
+# the test fixtures record for Ix CLI 0.12.1 (exact, preferred-kind, scored,
+# ambiguous, heuristic, none; later releases add fuzzy). No test runs a
+# resolving `ix locate` against a real CLI (tests/test_real_ix.sh has no
+# backend), so treat the list as unverified there. They are read as:
+#   (no key)        an exact name match -- the fixtures omit the mode for these
 #   exact           the same, should a release print it
 #   preferred-kind  one target, an exact-name tie broken by kind or a near-exact score
 #   anything else   a looser score, a heuristic or fuzzy pick, an ambiguous
-#                   name, or a mode added later
-# Only the first three count, so the hooks stay silent rather than inject --
-# or, with IX_BLOCK_ON_HIGH_CONFIDENCE=1, deny the tool call -- on a guess. An
-# ambiguous name never passes: it carries resolutionMode "ambiguous" (and, in
-# later releases, an error `code`).
+#                   name, a miss, or a mode added later
+# Only the first three count, so the hooks stay silent rather than inject on a
+# guess. The IX_BLOCK_ON_HIGH_CONFIDENCE=1 deny in ix-intercept.sh is narrower:
+# only the first two (LOC_MODE "" or "exact"). An ambiguous name never passes:
+# it carries resolutionMode "ambiguous" (and, in later releases, an error
+# `code`). If the CLI labels an ordinary match some other way, the hooks go
+# quiet (fail safe: no false deny, the native search still runs) and the
+# turned-down mode is written to IX_DEBUG_LOG.
 ix_locate_confident() {
   local _ok
   LOC_MODE=$(printf '%s' "$1" | jq -r '(.resolutionMode // "") | tostring' 2>/dev/null || echo "")

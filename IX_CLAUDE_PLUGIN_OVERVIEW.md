@@ -197,7 +197,8 @@ Off, it exits on its first lines: no ix call, no jq, nothing printed.
    Callers in the definition's directory come first; at most three are named.
 4. Otherwise silent: candidates, a scored, heuristic or fuzzy match or text hits alone are
    things the Grep itself returns.
-   (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer.)
+   (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer,
+   but only on an exact match: no `resolutionMode`, or `exact`.)
 
 **Glob path:**
 1. Extracts path from tool input
