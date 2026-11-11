@@ -31,6 +31,7 @@
 #   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
 #   ix_summarize_locate     — summarise locate results → LOC_PART
+#   ix_trim_jsonl           — keep an append-only JSONL log under a byte cap
 
 # ── Portable millisecond timestamp ───────────────────────────────────────────
 # Usage: ix_now_ms
@@ -284,6 +285,34 @@ hash_string() {
   else
     python3 -c "import hashlib,sys; print(hashlib.md5(sys.argv[1].encode()).hexdigest())" "$_input"
   fi
+}
+
+# ── Bounded JSONL logs ────────────────────────────────────────────────────────
+# Usage: ix_trim_jsonl <file> [max_bytes]
+# The ledger and the error log are appended to for as long as the plugin is
+# installed. Call this after an append: once <file> is larger than max_bytes
+# (default 1 MiB; an empty, zero or non-numeric value means the default), it
+# keeps the newest whole lines that fit in half of max_bytes. The file then
+# stays under max_bytes plus one line, and the next trim is another half of
+# max_bytes of appends away. Each call costs one `wc -c`; the rewrite is rare.
+# Rewrites through a temp file and `mv`, so a reader never sees a cut line; a
+# line appended by another hook during the rewrite can be lost.
+ix_trim_jsonl() {
+  local _f="${1:-}" _max="${2:-}" _size _tmp
+  case "$_max" in ''|*[!0-9]*) _max=1048576 ;; esac
+  [ "$_max" -gt 0 ] 2>/dev/null || _max=1048576
+  [ -f "$_f" ] && [ ! -L "$_f" ] || return 0
+  _size=$(wc -c < "$_f" 2>/dev/null) || return 0
+  _size="${_size//[!0-9]/}"
+  [ "${_size:-0}" -gt "$_max" ] 2>/dev/null || return 0
+  _tmp=$(mktemp "${_f}.XXXXXX" 2>/dev/null) || return 0
+  # The byte cut lands inside a line: drop that first, partial line.
+  if tail -c "$(( _max / 2 ))" "$_f" 2>/dev/null | sed '1d' > "$_tmp" 2>/dev/null \
+     && mv -f "$_tmp" "$_f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$_tmp" 2>/dev/null
+  return 0
 }
 
 # ── Health check (no ix status — commands fail fast on their own) ─────────────

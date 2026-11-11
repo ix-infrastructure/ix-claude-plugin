@@ -2950,6 +2950,121 @@ else
   pass "timing/no EPOCHREALTIME, BSD date"
 fi
 
+# ════════════════════════════════════════════════════════════════════════════
+section "bounded logs"
+# ════════════════════════════════════════════════════════════════════════════
+# ledger.jsonl and errors.jsonl live in the user's home, outside the plugin and
+# its state dir, and are appended to for as long as the plugin is installed.
+# Each must stay under its byte cap (plus one line), keep only whole JSON lines,
+# and keep the newest records. Small caps here; the default is 1 MiB.
+
+# _bounded_check <label> <file> <cap> <appended> <newest-jq-filter>
+_bounded_check() {
+  local _label="$1" _file="$2" _cap="$3" _appended="$4" _newest="$5" _size _lines
+  if [ ! -f "${_file}" ]; then
+    fail "${_label}: file written" "missing: ${_file}"; return
+  fi
+  _size=$(wc -c < "${_file}" | tr -d ' ')
+  _lines=$(wc -l < "${_file}" | tr -d ' ')
+  # Lines in these runs are well under 1 KiB: cap + 1 KiB bounds "cap plus one line".
+  if [ "${_size}" -le $(( _cap + 1024 )) ]; then
+    pass "${_label}: stays under its cap after ${_appended} appends"
+  else
+    fail "${_label}: stays under its cap after ${_appended} appends" "size ${_size} > ${_cap} + 1024"
+  fi
+  if [ "${_lines}" -lt "${_appended}" ] && [ "${_lines}" -gt 0 ]; then
+    pass "${_label}: trimmed, not emptied (${_lines} of ${_appended} lines kept)"
+  else
+    fail "${_label}: trimmed, not emptied" "${_lines} of ${_appended} lines kept"
+  fi
+  if jq -e . "${_file}" >/dev/null 2>&1 \
+     && [ "$(jq -c . "${_file}" | wc -l | tr -d ' ')" = "${_lines}" ]; then
+    pass "${_label}: every kept line is whole JSON"
+  else
+    fail "${_label}: every kept line is whole JSON" "$(head -c 200 "${_file}")"
+  fi
+  if [ "$(tail -n 1 "${_file}" | jq -r "${_newest}" 2>/dev/null)" = "${_appended}" ]; then
+    pass "${_label}: newest record kept"
+  else
+    fail "${_label}: newest record kept" "last line: $(tail -n 1 "${_file}" | head -c 200)"
+  fi
+}
+
+_bl_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_bl_tmp}/home" "${_bl_tmp}/tmp"
+# Ledger: 200 appends against a 4 KiB cap, then the Stop hook's reader still
+# finds this turn's records.
+_bl_turn=$(
+  HOME="${_bl_tmp}/home" TMPDIR="${_bl_tmp}/tmp" IX_LEDGER_MAX_BYTES=4096 \
+  INPUT='{"session_id":"bounded-ledger"}' bash -c '
+    source "$1/ix-errors.sh" 2>/dev/null || true
+    source "$1/ix-lib.sh"
+    source "$1/ix-ledger.sh"
+    ix_ledger_append UserPromptSubmit Briefing 10 "" 1 "" 0 "turn start"
+    i=1
+    while [ "$i" -le 199 ]; do
+      ix_ledger_append PreToolUse Grep "$i" "locate,callers" 0.9 "" 3 "$i"
+      i=$((i + 1))
+    done
+    ix_ledger_append PreToolUse Grep 201 "locate" 0.9 "" 3 "201"
+    ix_ledger_last_turn | jq -r "length" 2>/dev/null
+  ' _ "${HOOKS_DIR}" 2>/dev/null)
+_bounded_check "ledger.jsonl" "${_bl_tmp}/home/.local/share/ix/plugin/ledger/ledger.jsonl" \
+  4096 201 '.note'
+if [ -n "${_bl_turn}" ] && [ "${_bl_turn}" -gt 0 ] 2>/dev/null; then
+  pass "ledger.jsonl: the Stop hook still reads this session's records after a trim"
+else
+  fail "ledger.jsonl: the Stop hook still reads this session's records after a trim" "got '${_bl_turn}'"
+fi
+
+# Errors: 200 captures against a 4 KiB cap. ix_capture_async writes from a
+# disowned background subshell; `9>&1` inside $(...) waits for it (see
+# run_hook_with_error_ledger), so the appends happen one after another.
+HOME="${_bl_tmp}/home" TMPDIR="${_bl_tmp}/tmp" IX_ERROR_MAX_BYTES=4096 \
+IX_ERROR_MODE=local bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  i=1
+  while [ "$i" -le 200 ]; do
+    : "$(ix_capture_async ix ix-intercept "ix locate failed" "$i" "ix locate Foo" "backend unreachable" 9>&1)"
+    i=$((i + 1))
+  done
+' _ "${HOOKS_DIR}" >/dev/null 2>&1
+_bounded_check "errors.jsonl" "${_bl_tmp}/home/.local/share/ix/plugin/errors/errors.jsonl" \
+  4096 200 '.exit_code'
+
+# An unusable cap falls back to the default (1 MiB) instead of turning trimming
+# off or trimming everything: a small file is left exactly as it was.
+_bl_file="${_bl_tmp}/small.jsonl"
+printf '{"a":1}\n{"a":2}\n' > "${_bl_file}"
+_bl_out=$(TMPDIR="${_bl_tmp}/tmp" bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  for cap in "" 0 abc -5; do ix_trim_jsonl "$2" "$cap"; done
+  cat "$2"
+' _ "${HOOKS_DIR}" "${_bl_file}" 2>/dev/null)
+if [ "${_bl_out}" = $'{"a":1}\n{"a":2}' ]; then
+  pass "ix_trim_jsonl: an empty, zero or non-numeric cap means the default, not 'trim all'"
+else
+  fail "ix_trim_jsonl: an empty, zero or non-numeric cap means the default, not 'trim all'" "got: ${_bl_out}"
+fi
+
+# With no cap set, the default is 1 MiB: a 1.2 MB log comes back under it.
+_bl_big="${_bl_tmp}/big.jsonl"
+awk 'BEGIN { for (i = 1; i <= 12000; i++) printf "{\"n\":%d,\"pad\":\"%080d\"}\n", i, 0 }' > "${_bl_big}"
+TMPDIR="${_bl_tmp}/tmp" bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  ix_trim_jsonl "$2"
+' _ "${HOOKS_DIR}" "${_bl_big}" 2>/dev/null
+_bl_size=$(wc -c < "${_bl_big}" | tr -d ' ')
+if [ "${_bl_size}" -le 1048576 ] && [ "${_bl_size}" -ge 400000 ] \
+   && [ "$(tail -n 1 "${_bl_big}" | jq -r .n 2>/dev/null)" = "12000" ]; then
+  pass "ix_trim_jsonl: default cap is 1 MiB (1.2 MB -> ${_bl_size} bytes, newest kept)"
+else
+  fail "ix_trim_jsonl: default cap is 1 MiB" "size ${_bl_size}, last: $(tail -n 1 "${_bl_big}")"
+fi
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════

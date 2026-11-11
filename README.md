@@ -83,6 +83,20 @@ The hooks that are off by default block the tool call while they run, and what t
 
 All hooks bail silently if `ix` is not in PATH or the backend is unreachable.
 
+## Files the plugin writes
+
+Outside its install directory, the hooks write only these. All are per user and safe to delete at any time; a hook recreates what it needs.
+
+| Path | What | Bound | Switch |
+|------|------|-------|--------|
+| `~/.local/share/ix/plugin/ledger/ledger.jsonl` | One line per context injection; the `Stop` hook reads this session's lines to say how Ix helped on the turn | Past `IX_LEDGER_MAX_BYTES` (default 1 MiB) the oldest lines go, leaving about half | `IX_LEDGER_MODE=off` stops writing it |
+| `~/.local/share/ix/plugin/errors/errors.jsonl` | One line per failed `ix` call, with secrets redacted; never sent anywhere | Past `IX_ERROR_MAX_BYTES` (default 1 MiB) the oldest lines go, leaving about half | `IX_ERROR_MODE=off` stops writing it |
+| `${TMPDIR:-/tmp}/ix-plugin-cache-<uid>/` (private, `0700`) | Hook caches: health and Pro checks, briefing, once-per-session markers, map debounce stamps, the clock probe | Small files, one per project or session; not pruned | — |
+| `${XDG_STATE_HOME:-~/.local/state}/ix-claude-plugin/` | The same caches except the clock probe, used only when the directory above is unusable (for example another user created it). When neither is usable, a hook run uses a fresh private `mktemp -d` directory in `$TMPDIR` and caches nothing | As above | — |
+| `$IX_DEBUG_LOG` | Debug log, only when you set it (see below) | Not trimmed: unset it when done | Unset by default |
+
+Hooks also create short-lived temp files in `$TMPDIR` for an `ix` command's stderr and remove them when it returns. `/ix-docs` writes the documentation you ask for into your project (`--out`).
+
 ## Debugging ix Hook Calls
 
 If you want to see exactly which `ix` CLI commands Claude-triggered hooks run, start Claude Code with `IX_DEBUG_LOG` set in its environment:
