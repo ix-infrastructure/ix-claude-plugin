@@ -27,6 +27,7 @@
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
 #   ix_run_bounded          — run a command under a wall-clock bound where possible
+#   ix_budget_start         — give the rest of this hook a shared budget for ix_run_bounded
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
 #   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
@@ -173,12 +174,8 @@ ix_request_auto_map() {
   echo "$_now" > "$_stamp" 2>/dev/null || true
 
   ix_log_command ix status --format json --root "$_root"
-  if command -v timeout >/dev/null 2>&1; then
-    _status=$(cd "$_root" && timeout "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" \
-      ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  else
-    _status=$(cd "$_root" && ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  fi
+  _status=$(cd "$_root" && ix_run_bounded "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" ix status --format json --root "$_root" 2>/dev/null) \
+    || _status=""
   if ! printf '%s' "$(parse_json "$_status")" | jq -e '.graphCompleted == true' >/dev/null 2>&1; then
     ix_log "AUTOMAP skip: $_root is not mapped (or ix status failed)"
     return 0
@@ -316,8 +313,26 @@ ix_health_check() {
 # under `set -euo pipefail`, an unbounded run is the fallback — the callers that
 # matter also cache their result before running, so an overrun costs one hook
 # invocation rather than every one after it.
+#
+# Under a budget (ix_budget_start), the bound is also cut to what is left of
+# it, and a spent budget runs nothing: it returns 124, the exit code of a
+# command `timeout` cut short, so callers handle it as they handle a timeout.
+# Cleared on load: a budget belongs to the hook that set it, never inherited.
+_IX_DEADLINE=""
 ix_run_bounded() {
-  local _secs="$1"; shift
+  local _secs="$1" _left; shift
+  if [[ "${_IX_DEADLINE:-}" =~ ^[0-9]+$ ]]; then
+    _left=$(( _IX_DEADLINE - $(date +%s) ))
+    if [ "$_left" -le 0 ]; then
+      ix_log "SKIP $* (hook budget spent)"
+      return 124
+    fi
+    # A non-integer per-call bound ("2.5") cannot be compared here; the
+    # budget's remainder bounds it instead.
+    if ! [[ "$_secs" =~ ^[0-9]+$ ]] || [ "$_secs" -eq 0 ] || [ "$_secs" -gt "$_left" ]; then
+      _secs="$_left"
+    fi
+  fi
   if command -v timeout >/dev/null 2>&1; then
     timeout "$_secs" "$@"
     return $?
@@ -327,6 +342,17 @@ ix_run_bounded() {
     return $?
   fi
   "$@"
+}
+
+# Usage: ix_budget_start <seconds>
+# Every ix_run_bounded after this, in this shell and its subshells, ends within
+# <seconds> of now: a hook that makes several ix calls in a row sets this below
+# its hooks.json timeout, so the sum of its calls cannot outlast the hook.
+# Whole seconds (`date +%s`), so a call can end up to a second past it.
+ix_budget_start() {
+  local _secs="${1:-0}"
+  [[ "$_secs" =~ ^[0-9]+$ ]] || _secs=0
+  _IX_DEADLINE=$(( $(date +%s) + _secs ))
 }
 
 # ── Pro check (TTL tied to health check) ─────────────────────────────────────
@@ -447,8 +473,11 @@ ix_run_text_locate() {
   _text_tmp=$(mktemp); _loc_tmp=$(mktemp)
   _text_err=$(mktemp); _loc_err=$(mktemp)
 
+  # Both bounded (IX_TEXT_TIMEOUT, IX_LOCATE_TIMEOUT, 4s each, run side by
+  # side): a plain `wait` on an unbounded call held the hook until Claude Code
+  # killed it, losing the result of the call that did answer.
   ix_log_command ix text "${_TEXT_ARGS[@]}"
-  ix text "${_TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
+  ix_run_bounded "${IX_TEXT_TIMEOUT:-4}" ix text "${_TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
   _TEXT_PID=$!
 
   _is_plain=1
@@ -468,7 +497,7 @@ ix_run_text_locate() {
   _LOC_PID=""
   if [ "$_is_plain" -eq 1 ]; then
     ix_log_command ix locate "$_pattern" --format json
-    ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
+    ix_run_bounded "${IX_LOCATE_TIMEOUT:-4}" ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
     _LOC_PID=$!
   else
     ix_log "SKIP ix locate pattern treated as non-plain"
