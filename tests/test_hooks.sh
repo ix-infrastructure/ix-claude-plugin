@@ -983,10 +983,11 @@ fi
 
 # ── `ix locate --format json` fixtures match what the CLI prints ─────────────
 # Ix CLI 0.12.1 prints LocateOutput: resolvedTarget {id, kind, name, path} (null
-# when nothing was picked), lineRange, container, systemPath (an array),
-# diagnostics, hasMapData, stale, and resolutionMode -- which it leaves out on an
-# exact name match and sets to preferred-kind, scored, ambiguous or heuristic
-# otherwise (later releases add fuzzy). An ambiguous name adds candidates; later
+# when nothing was picked), lineRange, container, systemPath (an array, or null
+# on an ambiguous or missed name), diagnostics, hasMapData, stale, and
+# resolutionMode -- which it leaves out on an exact name match and sets to
+# preferred-kind, scored, ambiguous, heuristic or none (a miss) otherwise
+# (later releases add fuzzy; "exact" is accepted should a release print it). An ambiguous name adds candidates; later
 # releases also give it an error code and message. Nothing else -- in particular
 # no `confidence`, which the hooks once gated on and the CLI never printed.
 for _fx in "${FX_IX}"/locate_*.json; do
@@ -996,9 +997,9 @@ for _fx in "${FX_IX}"/locate_*.json; do
     + (. as $o | ["resolvedTarget", "systemPath", "diagnostics"] | map(select(. as $k | $o | has($k) | not)) | map("<missing " + . + ">"))
     + (if (.resolvedTarget | type) == "object" then (.resolvedTarget | keys - ["id", "kind", "name", "path"] | map("resolvedTarget." + .))
        elif .resolvedTarget == null then [] else ["<resolvedTarget not an object>"] end)
-    + (if (.systemPath | type) == "array" then [] else ["<systemPath not an array>"] end)
+    + (if (.systemPath | type) == "array" or .systemPath == null then [] else ["<systemPath not an array or null>"] end)
     + (if has("resolutionMode") | not then []
-       elif (.resolutionMode | IN("preferred-kind", "scored", "ambiguous", "heuristic", "fuzzy")) then []
+       elif (.resolutionMode | IN("exact", "preferred-kind", "scored", "ambiguous", "heuristic", "none", "fuzzy")) then []
        else ["<resolutionMode " + (.resolutionMode | tostring) + " is not one ix locate prints>"] end)
     + (if (has("candidates") or has("code")) and .resolutionMode != "ambiguous" then ["<ambiguity record without resolutionMode ambiguous>"] else [] end)
     + ([.. | objects | keys[] | select(. == "confidence")] | unique | map("<confidence>"))
@@ -1020,7 +1021,7 @@ fi
 # ix_locate_confident: which resolutionMode values name one definition.
 _lc_target='"resolvedTarget":{"id":"x","kind":"class","name":"AuthService","path":"src/auth.ts"},"systemPath":[],"diagnostics":[]'
 for _case in "<none>:yes" "exact:yes" "preferred-kind:yes" "scored:no" "heuristic:no" \
-             "ambiguous:no" "fuzzy:no" "some-future-mode:no"; do
+             "ambiguous:no" "fuzzy:no" "none:no" "some-future-mode:no"; do
   _mode=${_case%%:*}; _want=${_case##*:}
   if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
   else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
@@ -1031,7 +1032,24 @@ for _case in "<none>:yes" "exact:yes" "preferred-kind:yes" "scored:no" "heuristi
     fail "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}" "got '${_got}'"
   fi
 done
-for _fx in locate_candidates.json locate_ambiguous_target.json; do
+# A named target turned down only for its mode is logged, so a CLI that labels
+# an exact match differently is visible in IX_DEBUG_LOG rather than silent.
+_lc_log=$(mktemp)
+for _case in "scored:1" "some-future-mode:1" "<none>:0" "preferred-kind:0"; do
+  _mode=${_case%%:*}; _want=${_case##*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  : > "$_lc_log"
+  IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2"' _ "$HOOKS_DIR" "$_body" >/dev/null 2>&1
+  _got=$(grep -c "LOCATE target not used: resolutionMode=${_mode}" "$_lc_log")
+  if [ "$_got" = "$_want" ]; then
+    pass "lib/ix_locate_confident logs a turned-down mode ${_mode}: ${_want}"
+  else
+    fail "lib/ix_locate_confident logs a turned-down mode ${_mode}: ${_want}" "log: $(cat "$_lc_log")"
+  fi
+done
+rm -f "$_lc_log"
+for _fx in locate_candidates.json locate_ambiguous_target.json locate_none.json; do
   _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$(cat "$2")" && echo yes || echo no' _ "$HOOKS_DIR" "${FX_IX}/${_fx}" 2>/dev/null)
   if [ "$_got" = "no" ]; then
     pass "lib/ix_locate_confident rejects ${_fx%.json}"

@@ -571,8 +571,12 @@ ix_locate_confident() {
     if (.code // null) != null then "no"
     elif ((.resolvedTarget.name // "") == "") or ((.resolvedTarget.path // "") == "") then "no"
     else (.resolutionMode // "exact") as $m
-      | if ($m == "exact" or $m == "preferred-kind") then "yes" else "no" end
+      | if ($m == "exact" or $m == "preferred-kind") then "yes" else "mode" end
     end' 2>/dev/null || echo "no")
+  # A named target turned down only for its mode is logged, so a release that
+  # labels an ordinary exact match differently shows up in IX_DEBUG_LOG instead
+  # of silencing the hints unnoticed.
+  [ "$_ok" = "mode" ] && ix_log "LOCATE target not used: resolutionMode=${LOC_MODE}"
   [ "$_ok" = "yes" ]
 }
 
