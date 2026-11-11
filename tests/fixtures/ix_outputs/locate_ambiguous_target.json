@@ -4,5 +4,9 @@
   "candidates": [
     {"name": "AuthService", "kind": "class", "path": "src/auth.ts"},
     {"name": "AuthService", "kind": "class", "path": "packages/web/src/auth.ts"}
-  ]
+  ],
+  "resolvedTarget": null,
+  "resolutionMode": "ambiguous",
+  "systemPath": [],
+  "diagnostics": []
 }

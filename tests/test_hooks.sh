@@ -981,12 +981,79 @@ else
   pass "lib/ix_looks_like_secret snake-case alternation"
 fi
 
+# ── `ix locate --format json` fixtures match what the CLI prints ─────────────
+# Ix CLI 0.12.1 prints LocateOutput: resolvedTarget {id, kind, name, path} (null
+# when nothing was picked), lineRange, container, systemPath (an array),
+# diagnostics, hasMapData, stale, and resolutionMode -- which it leaves out on an
+# exact name match and sets to preferred-kind, scored, ambiguous or heuristic
+# otherwise (later releases add fuzzy). An ambiguous name adds candidates; later
+# releases also give it an error code and message. Nothing else -- in particular
+# no `confidence`, which the hooks once gated on and the CLI never printed.
+for _fx in "${FX_IX}"/locate_*.json; do
+  _bad=$(jq -r '
+    (keys - ["resolvedTarget", "resolutionMode", "lineRange", "container", "systemPath",
+             "diagnostics", "hasMapData", "stale", "candidates", "code", "message"])
+    + (. as $o | ["resolvedTarget", "systemPath", "diagnostics"] | map(select(. as $k | $o | has($k) | not)) | map("<missing " + . + ">"))
+    + (if (.resolvedTarget | type) == "object" then (.resolvedTarget | keys - ["id", "kind", "name", "path"] | map("resolvedTarget." + .))
+       elif .resolvedTarget == null then [] else ["<resolvedTarget not an object>"] end)
+    + (if (.systemPath | type) == "array" then [] else ["<systemPath not an array>"] end)
+    + (if has("resolutionMode") | not then []
+       elif (.resolutionMode | IN("preferred-kind", "scored", "ambiguous", "heuristic", "fuzzy")) then []
+       else ["<resolutionMode " + (.resolutionMode | tostring) + " is not one ix locate prints>"] end)
+    + (if (has("candidates") or has("code")) and .resolutionMode != "ambiguous" then ["<ambiguity record without resolutionMode ambiguous>"] else [] end)
+    + ([.. | objects | keys[] | select(. == "confidence")] | unique | map("<confidence>"))
+    | join(", ")' "$_fx" 2>&1)
+  if [ -z "$_bad" ]; then
+    pass "fixture/$(basename "$_fx") has only keys ix locate prints"
+  else
+    fail "fixture/$(basename "$_fx") has only keys ix locate prints" "unexpected: ${_bad}"
+  fi
+done
+# The shape the CLI prints for an exact match -- no resolutionMode -- is the one
+# every positive hook test runs on, so the gate's default stays pinned.
+if jq -e 'has("resolutionMode") | not' "${FX_IX}/locate_resolved.json" >/dev/null; then
+  pass "fixture/locate_resolved.json is an exact match without resolutionMode"
+else
+  fail "fixture/locate_resolved.json is an exact match without resolutionMode" "$(cat "${FX_IX}/locate_resolved.json")"
+fi
+
+# ix_locate_confident: which resolutionMode values name one definition.
+_lc_target='"resolvedTarget":{"id":"x","kind":"class","name":"AuthService","path":"src/auth.ts"},"systemPath":[],"diagnostics":[]'
+for _case in "<none>:yes" "exact:yes" "preferred-kind:yes" "scored:no" "heuristic:no" \
+             "ambiguous:no" "fuzzy:no" "some-future-mode:no"; do
+  _mode=${_case%%:*}; _want=${_case##*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" && echo yes || echo no' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  if [ "$_got" = "$_want" ]; then
+    pass "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}"
+  else
+    fail "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}" "got '${_got}'"
+  fi
+done
+for _fx in locate_candidates.json locate_ambiguous_target.json; do
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$(cat "$2")" && echo yes || echo no' _ "$HOOKS_DIR" "${FX_IX}/${_fx}" 2>/dev/null)
+  if [ "$_got" = "no" ]; then
+    pass "lib/ix_locate_confident rejects ${_fx%.json}"
+  else
+    fail "lib/ix_locate_confident rejects ${_fx%.json}" "got '${_got}'"
+  fi
+done
+# And no hook reads one it does not print.
+if grep -nE '\.confidence|resolvedTarget\.resolutionMode' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" \
+     | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null; then
+  fail "locate readers use only fields ix locate prints" \
+    "$(grep -nE '\.confidence|resolvedTarget\.resolutionMode' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" | head -3)"
+else
+  pass "locate readers use only fields ix locate prints"
+fi
+
 # Plain symbol → high-confidence exact match. The answer is injected either
 # way; IX_BLOCK_ON_HIGH_CONFIDENCE decides whether the native Grep is also
 # denied, and it is off by default (denying costs a whole turn to save a call).
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
 assert_additional_context "intercept/grep plain symbol augments by default" \
-  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
@@ -1085,10 +1152,35 @@ assert_empty "intercept/secret pattern suppressed"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_FAIL=1
 assert_empty "intercept/ix failure degrades gracefully"
 
-# Low-confidence locate → allow native Grep with no injection
+# A fuzzy resolution (a resolutionMode other than exact or preferred-kind) is not one
+# definition the hook can stand behind: native Grep runs, nothing is injected,
+# and the opt-in deny never fires on it.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "intercept/low confidence locate allows native Grep"
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "intercept/fuzzy locate allows native Grep"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy locate is never denied"
+# A looser scored pick is not one either.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/scored locate is never denied"
+# preferred-kind is one target the CLI resolved itself (an exact-name tie broken
+# by kind, or a near-exact score): injected, and denied when asked to.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"
+assert_additional_context "intercept/preferred-kind locate augments" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/preferred-kind locate blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+# Nor does an ambiguous match deny the Grep, in either release's shape.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/ambiguous locate (0.12.1 shape) is never denied"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous_target.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/ambiguous locate is never denied"
 
 # Escape hatch disables blocking even for exact high-confidence matches
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=0
@@ -1326,7 +1418,7 @@ section "ix-bash.sh"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}"
 assert_additional_context "bash/grep intercepted"
 assert_additional_context "bash/grep answered with definition and callers" \
-  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 if printf '%s' "${_OUT}" | grep -qE "Prefer|text hits"; then
   fail "bash/no grep hits repeated back, no ix nudge" "got: ${_OUT}"
 else
@@ -1337,9 +1429,14 @@ fi
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
 assert_empty "bash/candidates without one definition stay silent"
 
-# A low-confidence resolution is not worth a line.
-run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "bash/low confidence stays silent"
+# A fuzzy resolution is not worth a line.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "bash/fuzzy resolution stays silent"
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json"
+assert_empty "bash/scored resolution stays silent"
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"
+assert_additional_context "bash/preferred-kind resolution answered with definition and callers" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 
 # An alternation is a grep expression, not a symbol: nothing in the graph is
 # named `a|b`, so the two ix calls could only come back empty. It must be

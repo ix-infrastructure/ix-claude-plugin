@@ -55,7 +55,7 @@ hook-internal parsing — that is intentional.)
 
 | Command | What it does |
 |---------|-------------|
-| `ix locate <symbol>` | Finds where a symbol is defined. Returns resolved target (name, kind, file path, confidence) or a list of candidates if ambiguous. Use `--kind`, `--path`, or `--pick N` to disambiguate. Falls back to text search if nothing found. |
+| `ix locate <symbol>` | Finds where a symbol is defined. Returns the resolved target (id, name, kind, file path), its line range and, unless the name matched exactly, how it was resolved (`resolutionMode`); an ambiguous name returns `resolutionMode: "ambiguous"` with candidates. Use `--kind`, `--path`, or `--pick N` to disambiguate. Falls back to text search if nothing found. |
 | `ix explain <symbol>` | Returns the symbol's role in the graph: kind, importance tier, category, caller count (fan_in), callee count (fan_out), confidence, key relationships, subsystem. This is the primary "what is this?" command. |
 | `ix read <symbol>` | Returns only that symbol's source code (not the whole file). Used as a last resort when graph data is insufficient. Symbol-level only — never file-level unless the file itself is the subject. |
 | `ix contains <symbol>` | Lists members of a class or module (methods, fields, sub-components). |
@@ -189,12 +189,13 @@ Off, it exits on its first lines: no ix call, no jq, nothing printed.
    regex or literal (nothing in the graph is named that).
 2. Runs `ix text <pattern> --limit 15` and `ix locate <pattern>` in parallel
    (background processes via `&`, then `wait`)
-3. If locate resolved one definition with confidence >= 0.6, runs
+3. If locate resolved one definition by an exact match (no `resolutionMode`)
+   or a `preferred-kind` one, runs
    `ix callers <name>` (bounded, `IX_CALLERS_TIMEOUT`, 4s) and injects what the
    Grep's own results cannot say:
    `` [ix] `Name` (kind) is defined at path:start-end; called from N places: a.ts:14 `call site` · b.ts:8 `…` (+M more) ``
    Callers in the definition's directory come first; at most three are named.
-4. Otherwise silent: candidates, a low-confidence match or text hits alone are
+4. Otherwise silent: candidates, a scored, heuristic or fuzzy match or text hits alone are
    things the Grep itself returns.
    (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer.)
 
@@ -228,7 +229,7 @@ secret-like strings, or empty ix results.
 2. Skips if pattern < 3 chars
 3. Runs `ix locate` (bounded, `IX_LOCATE_TIMEOUT`, 4s); the grep about to run
    lists the text hits itself
-4. If it resolved one definition with confidence >= 0.6, injects the same line
+4. If it resolved one definition by an exact or preferred-kind match, injects the same line
    as ix-intercept.sh: where it is defined and its callers at their call sites.
    Otherwise silent.
 

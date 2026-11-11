@@ -73,8 +73,9 @@ if [ "$TOOL" = "Grep" ]; then
   ix_summarize_locate "$_LOC_RAW"
   ix_log "RESULTS text='${TEXT_PART:-<none>}' locate='${LOC_PART:-<none>}'"
 
-  # Gate on graph confidence from locate result
-  CONF_WARN=""
+  # Gate on how locate resolved: only one definition the CLI picked itself (an
+  # exact or preferred-kind resolutionMode) may be injected or deny the Grep
+  # (ix_locate_confident; `ix locate` prints no confidence score).
   HOOK_MODE="allow"
   _loc_type=""
   _loc_name=""
@@ -82,21 +83,16 @@ if [ "$TOOL" = "Grep" ]; then
   if [ -n "$_LOC_RAW" ]; then
     _LOC_JSON=$(parse_json "$_LOC_RAW")
     if [ -n "$_LOC_JSON" ]; then
-      _confidence=$(echo "$_LOC_JSON" | jq -r '(.confidence // (.resolvedTarget.confidence // 1)) | tostring' 2>/dev/null || echo "1")
-      ix_confidence_gate "${_confidence:-1}"
-      if [ "$CONF_GATE" = "drop" ]; then
-        LOC_PART=""
-        TEXT_PART=""
-        ix_log "CONFIDENCE gate=drop conf=${_confidence:-?} → suppressing ix injection"
-      fi
-      _loc_type=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.type // .resolvedTarget.kind // "unknown"' 2>/dev/null || echo "")
+      _loc_resolved=0
+      ix_locate_confident "$_LOC_JSON" && _loc_resolved=1
+      _loc_type=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.kind // "unknown"' 2>/dev/null || echo "")
       _loc_name=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.name // ""' 2>/dev/null || echo "")
       _loc_path=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.path // ""' 2>/dev/null || echo "")
       if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
-         [ "$CONF_GATE" = "ok" ] && [ -n "$_loc_name" ] && [ -n "$_loc_path" ]; then
+         [ "$_loc_resolved" = "1" ]; then
         HOOK_MODE="block"
       fi
-      ix_log "CONFIDENCE gate=$CONF_GATE conf=${_confidence:-?} → mode=$HOOK_MODE"
+      ix_log "RESOLUTION resolved=${_loc_resolved} mode=${LOC_MODE:-<none>} → hook=$HOOK_MODE"
     fi
   fi
 
@@ -190,12 +186,12 @@ if [ "$TOOL" = "Grep" ]; then
     REASON="${REASON}"$'\n'"Found: ${_loc_name} (${_loc_type:-unknown}) at ${_loc_path}"
     [ -n "$TEXT_PART" ] && REASON="${REASON}"$'\n'"${TEXT_PART}"
     REASON="${REASON}"$'\n'"Next: ix read ${_loc_name} | ix explain ${_loc_name}"
-    ix_ledger_append "PreToolUse" "Grep" "${#REASON}" "text,locate" "${_confidence:-1}" "" "$_elapsed_ms" \
+    ix_ledger_append "PreToolUse" "Grep" "${#REASON}" "text,locate" "1" "" "$_elapsed_ms" \
       "surfaced a graph-backed match for ${_loc_name:-$PATTERN} and pointed to the right follow-up path."
     echo "ix locate '${PATTERN}' → ${_loc_name} at ${_loc_path} [BLOCKED]" >&2
     ix_hook_fallback "block" "$REASON" "$CONTEXT"
   elif [ "$HOOK_MODE" = "augment" ]; then
-    ix_ledger_append "PreToolUse" "Grep" "${#CONTEXT}" "locate,callers" "${_confidence:-1}" "" "$_elapsed_ms" \
+    ix_ledger_append "PreToolUse" "Grep" "${#CONTEXT}" "locate,callers" "1" "" "$_elapsed_ms" \
       "answered Grep for ${PATTERN} with its definition and callers."
     ix_log_injection "additionalContext" "$CONTEXT"
     echo "ix locate + callers: '${PATTERN}' → ${LOC_PART:-no exact match}" >&2
