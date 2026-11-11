@@ -187,8 +187,8 @@ Off, it exits on its first lines: no ix call, no jq, nothing printed.
 **Grep path:**
 1. Extracts pattern from tool input. Skips if < 3 chars, or if it is a phrase,
    regex or literal (nothing in the graph is named that).
-2. Runs `ix text <pattern> --limit 15` and `ix locate <pattern>` in parallel
-   (background processes via `&`, then `wait`)
+2. Runs `ix locate <pattern>` (bounded, `IX_LOCATE_TIMEOUT`, 4s); the Grep
+   about to run lists the text hits itself, so there is no `ix text` here
 3. If locate resolved one definition with confidence >= 0.6, runs
    `ix callers <name>` (bounded, `IX_CALLERS_TIMEOUT`, 4s) and injects what the
    Grep's own results cannot say:
@@ -196,7 +196,9 @@ Off, it exits on its first lines: no ix call, no jq, nothing printed.
    Callers in the definition's directory come first; at most three are named.
 4. Otherwise silent: candidates, a low-confidence match or text hits alone are
    things the Grep itself returns.
-   (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer.)
+   (`IX_BLOCK_ON_HIGH_CONFIDENCE=1` still denies the Grep with the locate answer;
+   only then does it run `ix text <pattern> --limit 15`, bounded by
+   `IX_TEXT_TIMEOUT` (2s), for a one-line summary of the text hits in the reason.)
 
 **Glob path:**
 1. Extracts path from tool input
@@ -356,20 +358,9 @@ ix-errors.sh and ix-lib.sh in one call, creating a single import hub for the gra
 - Strips ix "Update available" header noise (anything before the first `[` or `{`)
 - Extracts the first JSON array or object via `awk + jq`
 
-**ix_run_text_locate(pattern, [path], [lang])**
-- Runs `ix text` and `ix locate` in parallel (background processes)
-- Sets globals `_TEXT_RAW` and `_LOC_RAW`
-- Only runs `ix locate` for plain-string patterns (skips regex to avoid locate errors)
-- Captures errors to ix_capture_async if either command fails
-
 **ix_summarize_text(raw)**
 - Parses text results, sets global `TEXT_PART`
 - Format: "N text hits in a.ts, b.ts, c.ts (+M more)"
-
-**ix_summarize_locate(raw)**
-- Parses locate results, sets global `LOC_PART`
-- Format if resolved: "symbol: Name (kind, file.ts)"
-- Format if ambiguous: "candidates: A (fn), B (class), C (fn)"
 
 ---
 
@@ -1167,11 +1158,10 @@ hooks/
                           Creates a single import hub so the graph sees all hooks
                           as a connected component (star topology)
   ix-lib.sh               Shared utilities: ix_health_check, ix_check_pro,
-                          parse_json, ix_run_text_locate, ix_summarize_text,
-                          ix_summarize_locate
+                          parse_json, ix_summarize_text
   ix-errors.sh            Error capture + local JSONL logging with secret redaction
   ix-briefing.sh          UserPromptSubmit: inject session briefing (Pro only)
-  ix-intercept.sh         PreToolUse(Grep|Glob): front-run with ix text + locate
+  ix-intercept.sh         PreToolUse(Grep|Glob): front-run with ix locate + callers
   ix-read.sh              Disabled placeholder; not registered in hooks.json
   ix-bash.sh              PreToolUse(Bash): intercept grep/rg commands
   ix-pre-edit.sh          PreToolUse(Edit|Write): blast-radius warning before edit

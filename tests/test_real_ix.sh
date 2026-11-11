@@ -83,6 +83,20 @@ git -C "$PROJECT" init -q
 git -C "$PROJECT" add -A
 git -C "$PROJECT" -c user.email=ci@example.invalid -c user.name=ci commit -qm init
 
+# `ix` that resolves `ix locate` to computeTotal and hands every other command
+# to the real CLI: the only way to reach ix-intercept.sh's block branch, and the
+# `ix text` it runs there, without a backend (case 2b).
+mkdir -p "${ROOT_TMP}/ix-resolves"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "locate" ]; then\n'
+  printf "  printf '%%s\\\\n' '%s'\n" \
+    '{"resolvedTarget":{"name":"computeTotal","kind":"function","path":"src/math.js","confidence":0.95},"confidence":0.95}'
+  printf '  exit 0\nfi\n'
+  printf 'exec "%s" "$@"\n' "$(command -v ix)"
+} > "${ROOT_TMP}/ix-resolves/ix"
+chmod +x "${ROOT_TMP}/ix-resolves/ix"
+
 # hook_timeout <hook.sh> — the timeout hooks/hooks.json gives that command.
 hook_timeout() {
   jq -r --arg h "$1" '[.hooks[][] .hooks[] | select(.command | endswith("/" + $h)) | .timeout] | first // 10' \
@@ -211,15 +225,25 @@ EOF
     fi
   fi
 
-  # 2b. Grep with path and type: the hooks then add `ix text --path` and
-  #     `--language`, flags the bare Grep above never passes, so step 8 only
-  #     checks them against this CLI if a case sends them.
-  if run_hook "[${_name}] Grep intercept with path/type" ix-intercept.sh PreToolUse \
-       "$(payload PreToolUse Grep '{"pattern":"computeTotal","path":"src","type":"js"}')"; then
-    if [ -z "$OUT" ]; then
-      pass "[${_name}] Grep intercept with path/type: silent without a definition"
+  # 2b. Grep with path and type, blocking on: `ix text` runs only when the hook
+  #     blocks (#60), and only then adds `--path` and `--language`, so step 8
+  #     checks those flags against this CLI only if a case blocks. Blocking
+  #     needs a resolved definition, which no backend here can give, so
+  #     `ix locate` alone answers from a shim; `ix text` and the rest are this
+  #     CLI's. A block writes a ledger record for its session, so this case
+  #     runs under its own session: step 7's Stop check must see none.
+  local _block_payload
+  _block_payload=$(SESSION="${SESSION}-block" \
+    payload PreToolUse Grep '{"pattern":"computeTotal","path":"src","type":"js"}')
+  if PATH="${ROOT_TMP}/ix-resolves:${PATH}" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+     run_hook "[${_name}] Grep block with path/type" ix-intercept.sh PreToolUse \
+       "$_block_payload"; then
+    if ! printf '%s' "$OUT" | jq -e '.decision? == "block"' >/dev/null 2>&1; then
+      fail "[${_name}] Grep block with path/type: blocks" "stdout: ${OUT:0:200}"
+    elif ! grep -qE '\] CMD ix text computeTotal .*--path src( |$)' "$IX_DEBUG_LOG"; then
+      fail "[${_name}] Grep block with path/type: runs ix text" "no CMD ix text line in the debug log"
     else
-      fail "[${_name}] Grep intercept with path/type: silent without a definition" "stdout: ${OUT:0:200}"
+      pass "[${_name}] Grep block with path/type: blocks and runs ix text"
     fi
   fi
 

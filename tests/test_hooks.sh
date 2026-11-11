@@ -834,7 +834,7 @@ fi
 #   Correct input:  {"pattern":"AuthService","path":"src/"}  → block or augment
 #   No-op inputs:   "TODO", "timeout exceeded", regex like \w+\.ts$ → literal intent
 #   Expected stderr (block): ix locate 'AuthService' → AuthService at src/auth.ts [BLOCKED]
-#   Expected stderr (augment): ix text + ix locate: 'AuthService' → ...
+#   Expected stderr (augment): ix locate + callers: 'AuthService' → ...
 #
 # Glob — fires when: pattern has path structure (e.g. hooks/**/*.sh)
 #   Correct input:  {"pattern":"hooks/**/*.sh","path":"/repo"} → block or augment
@@ -990,6 +990,77 @@ assert_additional_context "intercept/grep plain symbol augments by default" \
 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+
+# Issue #60: the augment path injects the definition and its callers only, so
+# `ix text` (a ripgrep over the workspace) is never run for it. Only the block
+# branch, whose reason replaces the Grep's own results, still asks for it.
+_ICPT_CALLS="${TEST_TMPDIR}/intercept-calls.log"
+: > "${_ICPT_CALLS}"
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_additional_context "intercept/augment without ix text still names the definition" \
+  "is defined at src/auth.ts"
+assert_log_not_contains "intercept/augment logs no ix text command" "CMD ix text"
+assert_log_contains "intercept/augment logs ix locate" "CMD ix locate AuthService --format json"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/augment never runs ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/augment never runs ix text"
+fi
+
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_block_decision "intercept/block reason keeps the text-hit line" \
+  "4 text hits in auth.ts, auth.ts, auth.test.ts"
+if grep -qx 'text AuthService --limit 15 --format json --path src/' "${_ICPT_CALLS}"; then
+  pass "intercept/block runs ix text with the Grep's path"
+else
+  fail "intercept/block runs ix text with the Grep's path" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+fi
+
+# A low-confidence locate never blocks, so it must not pay for ix text either.
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_empty "intercept/low confidence with blocking on stays silent"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/no block, no ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/no block, no ix text"
+fi
+
+# `ix locate` runs under the same bound as in ix-bash.sh: a hung locate costs
+# IX_LOCATE_TIMEOUT, not the whole hook timeout, and the Grep answers alone.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_LOCATE_SLEEP=5 IX_LOCATE_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_empty "intercept/hung ix locate stays silent"
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT"
+  else
+    fail "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+
+  # The block branch's `ix text` has its own short bound; an overrun only
+  # drops the text-hit line, the Grep is still denied with the definition.
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+    IX_MOCK_TEXT_SLEEP=5 IX_TEXT_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_block_decision "intercept/hung ix text still blocks with the definition" \
+    "Found: AuthService (class) at src/auth.ts"
+  if printf '%s' "${_OUT}" | grep -q "text hits"; then
+    fail "intercept/hung ix text leaves out the text-hit line" "got: ${_OUT}"
+  else
+    pass "intercept/hung ix text leaves out the text-hit line"
+  fi
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/block ix text is bounded by IX_TEXT_TIMEOUT"
+  else
+    fail "intercept/block ix text is bounded by IX_TEXT_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+fi
 
 # TODO marker → literal search, hook stays silent
 run_hook ix-intercept.sh "${_GREP_TODO_FIXTURE}"
