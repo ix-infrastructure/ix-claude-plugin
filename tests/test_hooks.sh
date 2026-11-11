@@ -3022,6 +3022,117 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Repo docs: what ships with the plugin, and what it claims exists
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything in the repo root is installed with the plugin. The root keeps one
+# user document (README.md), one contributor document (CLAUDE.md) and the
+# changelog; a design note or task breakdown there ships to every user and
+# drifts from the hooks. And no current document may name an IX_* switch or a
+# hook script the code does not have. CHANGELOG.md is history: it may name
+# what was removed, and switches the Ix CLI itself reads.
+section "Repo docs"
+
+_REPO_DIR="$(cd "${TESTS_DIR}/.." && pwd)"
+
+# The docs the repo ships: in a git checkout, every *.md git knows about or
+# would add (tracked, plus untracked files .gitignore does not exclude), so a
+# contributor's ignored local notes (DESIGN.md, HANDOFF.md, ...) never fail
+# the suite; outside git, every *.md on disk. Prints repo-relative paths,
+# NUL-separated, skipping .git and paths deleted from the working tree.
+_list_md_files() {
+  local _dir="$1" _f
+  if git -C "${_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r -d '' _f; do
+      case "${_f}" in *.[mM][dD]) ;; *) continue ;; esac
+      [ -f "${_dir}/${_f}" ] && printf '%s\0' "${_f}"
+    done < <(git -C "${_dir}" ls-files -z --cached --others --exclude-standard)
+  else
+    (cd "${_dir}" && find . -path ./.git -prune -o -type f -iname '*.md' -print0) \
+      | while IFS= read -r -d '' _f; do printf '%s\0' "${_f#./}"; done
+  fi
+}
+
+_root_docs=$(_list_md_files "${_REPO_DIR}" | tr '\0' '\n' | grep -v / | LC_ALL=C sort -u | tr '\n' ' ')
+if [ "${_root_docs}" = "CHANGELOG.md CLAUDE.md README.md " ]; then
+  pass "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only"
+else
+  fail "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only" "found: ${_root_docs}"
+fi
+
+# Current docs: every shipped *.md, minus the changelog.
+_doc_files=()
+while IFS= read -r -d '' _f; do
+  [ "${_f}" = "CHANGELOG.md" ] && continue
+  _doc_files+=("${_REPO_DIR}/${_f}")
+done < <(_list_md_files "${_REPO_DIR}")
+# Where a switch can really live: the hook code (tests/test_hooks.sh still
+# sets a few switches no hook reads any more, so it does not count), or, for
+# the IX_MOCK_* knobs, the ix stub.
+_code_files=()
+while IFS= read -r -d '' _f; do
+  _code_files+=("${_f}")
+done < <(find "${HOOKS_DIR}" -type f ! -name '*.md' -print0)
+
+_missing_vars=""
+for _v in $(grep -ohE '\bIX_[A-Z0-9_]+' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  case "${_v}" in
+    IX_MOCK_*) grep -qw -- "${_v}" "${TESTS_DIR}/mock-ix.sh" ;;
+    *) grep -qw -- "${_v}" "${_code_files[@]}" ;;
+  esac 2>/dev/null || _missing_vars="${_missing_vars} ${_v}"
+done
+if [ -z "${_missing_vars}" ]; then
+  pass "docs/every IX_* variable a doc names exists in the hooks"
+else
+  fail "docs/every IX_* variable a doc names exists in the hooks" "missing:${_missing_vars}"
+fi
+
+_missing_hooks=""
+for _h in $(grep -ohE '\bix-[a-z0-9-]+\.sh\b' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  [ -f "${_REPO_DIR}/hooks/${_h}" ] || [ -f "${_REPO_DIR}/tests/${_h}" ] \
+    || _missing_hooks="${_missing_hooks} ${_h}"
+done
+if [ -z "${_missing_hooks}" ]; then
+  pass "docs/every ix-*.sh a doc names exists"
+else
+  fail "docs/every ix-*.sh a doc names exists" "missing:${_missing_hooks}"
+fi
+
+# _list_md_files: ignored local notes are skipped in git, found outside it.
+_LMD=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_LMD}/repo/docs" "${_LMD}/plain"
+(
+  cd "${_LMD}/repo" && git init -q . \
+    && printf 'DESIGN.md\n' > .gitignore \
+    && printf 'IX_SOMETHING_OLD\n' > DESIGN.md \
+    && : > README.md && : > docs/guide.md && : > NEW.md \
+    && git add README.md docs/guide.md .gitignore
+)
+_lmd_git=$(_list_md_files "${_LMD}/repo" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_git}" = "NEW.md README.md docs/guide.md " ]; then
+  pass "docs/doc listing skips gitignored notes, keeps tracked and new docs"
+else
+  fail "docs/doc listing skips gitignored notes, keeps tracked and new docs" "got: ${_lmd_git}"
+fi
+: > "${_LMD}/plain/README.md"; : > "${_LMD}/plain/DESIGN.md"
+_lmd_plain=$(_list_md_files "${_LMD}/plain" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_plain}" = "DESIGN.md README.md " ]; then
+  pass "docs/doc listing falls back to every *.md outside git"
+else
+  fail "docs/doc listing falls back to every *.md outside git" "got: ${_lmd_plain}"
+fi
+
+# Every hook hooks.json registers is named in README.md's hook table.
+_unlisted=""
+for _h in $(jq -r '.. | .command? // empty' "${HOOKS_DIR}/hooks.json" | sed 's|.*/||' | sort -u); do
+  grep -q -- "\`${_h}\`" "${_REPO_DIR}/README.md" || _unlisted="${_unlisted} ${_h}"
+done
+if [ -z "${_unlisted}" ]; then
+  pass "docs/README.md names every hook hooks.json registers"
+else
+  fail "docs/README.md names every hook hooks.json registers" "unlisted:${_unlisted}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════\n'
