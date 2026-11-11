@@ -20,6 +20,8 @@
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
 #   IX_MOCK_LOCATE_EXIT=N     — `ix locate` exits N *after* printing its body
 #                            (Ix#539)
+#   IX_MOCK_LOCATE_SLEEP=N    — `ix locate` sleeps N seconds before answering
+#   IX_MOCK_TEXT_SLEEP=N      — `ix text` sleeps N seconds before answering
 #   IX_MOCK_OVERVIEW_EXIT=N   — `ix overview` exits N *after* printing its body
 #   IX_MOCK_IMPACT_EXIT=N     — `ix impact` exits N *after* printing its body
 #   IX_MOCK_INVENTORY_EXIT=N  — `ix inventory` exits N *after* printing its body
@@ -87,6 +89,7 @@ fi
 
 case "$SUBCOMMAND" in
   text)
+    if [ -n "${IX_MOCK_TEXT_SLEEP:-}" ]; then sleep "${IX_MOCK_TEXT_SLEEP}"; fi
     cat "${IX_MOCK_TEXT_FILE:-${FX}/text_results.json}"
     ;;
   locate)
@@ -96,6 +99,7 @@ case "$SUBCOMMAND" in
         exit 1
       fi
     done
+    if [ -n "${IX_MOCK_LOCATE_SLEEP:-}" ]; then sleep "${IX_MOCK_LOCATE_SLEEP}"; fi
     cat "${IX_MOCK_LOCATE_FILE:-${FX}/locate_resolved.json}"
     # Ix#539 makes an unresolved target exit non-zero while still printing its
     # body. Simulated separately from IX_MOCK_FAIL, which suppresses output too:
