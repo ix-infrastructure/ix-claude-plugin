@@ -110,7 +110,7 @@ done
 
 echo ""
 echo "  Hooks:"
-for hook in ix-briefing.sh ix-intercept.sh ix-read.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh ix-report.sh; do
+for hook in ix-briefing.sh ix-intercept.sh ix-bash.sh ix-pre-edit.sh ix-ingest.sh ix-map.sh ix-report.sh; do
   HOOK_FILE="$CACHE/hooks/$hook"
   if   [ -f "$HOOK_FILE" ] && [ -x "$HOOK_FILE" ]; then ok "$hook"
   elif [ -f "$HOOK_FILE" ]; then fail "$hook not executable"
@@ -143,12 +143,6 @@ if [ "$IX_OK" = "1" ]; then
   ix status >/dev/null 2>&1 \
     && ok "ix status: healthy" \
     || fail "ix status: unhealthy — hooks will bail silently"
-
-  READ_OUT=$(echo "{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$REPO/hooks/ix-read.sh\"}}" \
-    | bash "$CACHE/hooks/ix-read.sh" 2>/dev/null || echo "")
-  echo "$READ_OUT" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
-    && ok "ix-read.sh → additionalContext injected" \
-    || info "ix-read.sh → no output (run 'ix map' first)"
 
   # These three are off by default; switch each on to see what it says.
   GREP_OUT=$(echo '{"tool_name":"Grep","tool_input":{"pattern":"ix inventory"}}' \

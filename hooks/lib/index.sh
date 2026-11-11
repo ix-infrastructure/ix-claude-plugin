@@ -24,7 +24,7 @@
 #   ix_ledger_append, ix_ledger_last_turn
 #
 # Env defaults (set here, override via shell env):
-#   IX_ANNOTATE_MODE, IX_ANNOTATE_CHANNEL, IX_INGEST_INJECT
+#   IX_ANNOTATE_MODE, IX_ANNOTATE_CHANNEL
 #   IX_MAP_DEBOUNCE_SECONDS
 #   IX_HOOK_OUTPUT_STYLE, IX_SKIP_SECRET_PATTERNS, IX_BLOCK_ON_HIGH_CONFIDENCE
 
@@ -41,7 +41,6 @@ IX_ANNOTATE_MODE="${IX_ANNOTATE_MODE:-brief}"                   # off | brief | 
 # section about work the person had just watched happen. The Stop summary is
 # systemMessage whatever the channel, so the person keeps seeing it.
 IX_ANNOTATE_CHANNEL="${IX_ANNOTATE_CHANNEL:-systemMessage}"    # systemMessage | modelSuffix | both
-IX_INGEST_INJECT="${IX_INGEST_INJECT:-off}"                    # off | on | debug-only
 IX_MAP_DEBOUNCE_SECONDS="${IX_MAP_DEBOUNCE_SECONDS:-300}"
 IX_HOOK_OUTPUT_STYLE="${IX_HOOK_OUTPUT_STYLE:-legacy}"         # legacy | structured (Phase C)
 IX_SKIP_SECRET_PATTERNS="${IX_SKIP_SECRET_PATTERNS:-1}"        # Phase C

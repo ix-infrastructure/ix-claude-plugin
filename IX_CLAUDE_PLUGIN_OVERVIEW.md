@@ -149,8 +149,7 @@ Stop                        → ix-annotate.sh      (5s timeout)
 Stop                        → ix-map.sh           (async, 60s)
 ```
 
-`hooks/ix-read.sh` remains in the repo as a disabled placeholder. It is not
-registered in `hooks/hooks.json`, so no Read hook runs at runtime.
+No hook is registered for Read.
 
 ---
 
@@ -202,14 +201,6 @@ Off, it exits on its first lines: no ix call, no jq, nothing printed.
 1. Extracts path from tool input
 2. Runs `ix inventory --format json --path <path>`
 3. Injects: `[ix] glob 'pattern' in dir: N entities — Name1, Name2, ...`
-
----
-
-### ix-read.sh — disabled placeholder
-
-`ix-read.sh` is kept for potential future use, but it was removed from
-`hooks/hooks.json` in Phase E because the additive Read hook cost more than it
-saved. Read tool calls do not trigger any ix hook at runtime.
 
 ---
 
@@ -1143,7 +1134,7 @@ User types: "how does the auth middleware work?"
 
 4. Claude invokes Read("middleware/auth.ts")
 5. No Read hook fires:
-   - `ix-read.sh` is disabled and not registered in `hooks/hooks.json`
+   - no Read hook is registered in `hooks/hooks.json`
    - Claude reads the file directly if it still needs implementation detail
 
 6. Claude invokes Edit("middleware/auth.ts", ...)
@@ -1172,7 +1163,6 @@ hooks/
   ix-errors.sh            Error capture + local JSONL logging with secret redaction
   ix-briefing.sh          UserPromptSubmit: inject session briefing (Pro only)
   ix-intercept.sh         PreToolUse(Grep|Glob): front-run with ix text + locate
-  ix-read.sh              Disabled placeholder; not registered in hooks.json
   ix-bash.sh              PreToolUse(Bash): intercept grep/rg commands
   ix-pre-edit.sh          PreToolUse(Edit|Write): blast-radius warning before edit
   ix-ingest.sh            PostToolUse(Edit|Write): async graph update for changed file

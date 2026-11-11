@@ -40,7 +40,6 @@ hooks/
   ix-ingest.sh               post-edit guarded root-map request
   ix-dependents.sh           post-edit dependents of the changed symbols (ix hook; off unless IX_EDIT_DEPENDENTS=on)
   ix-map.sh                  async Stop-time guarded root-map request
-  ix-read.sh                 disabled placeholder; not registered
   ix-lib.sh, ix-errors.sh, ix-ledger.sh, ix-report.sh, lib/index.sh
   lib/timing.sh              IX_DEBUG_LOG EXIT line; lib/bash-write.sh: can a Bash line write?
 tests/
@@ -112,7 +111,7 @@ Hook work:
 - Start with `hooks/hooks.json` to verify which hooks are actually active.
 - Put reusable logic in `hooks/ix-lib.sh` or `hooks/lib/index.sh`, not inline everywhere.
 - Keep hook output short and attributable; these paths are latency-sensitive.
-- If a hook is intentionally disabled, leave that explicit in the script header as with `hooks/ix-read.sh`.
+- Every `hooks/*.sh` is registered in `hooks/hooks.json`, a library the hooks source, or a documented command-line helper (`ix-report.sh`); delete a hook you unregister (git history keeps it). `tests/test_hooks.sh` ("hook registry") enforces this, and that every env default in `hooks/lib/index.sh` is read by a hook.
 
 Testing:
 - Run `bash tests/test_hooks.sh` after hook changes.

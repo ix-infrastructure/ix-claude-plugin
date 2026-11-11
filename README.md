@@ -79,8 +79,6 @@ Skills that delegate deeper work launch `ix-explorer` with a role brief that sit
 
 The hooks that are off by default block the tool call while they run, and what they say rarely changes what Claude does next. Off, each exits on its first lines (no ix call, no jq, nothing printed). To turn one back on, set its switch in the environment Claude Code starts in, e.g. `export IX_EDIT_DEPENDENTS=on`.
 
-`hooks/ix-read.sh` remains in the repo as a disabled placeholder, but it is not registered in `hooks/hooks.json` and does not run at runtime.
-
 All hooks bail silently if `ix` is not in PATH or the backend is unreachable.
 
 ## Debugging ix Hook Calls

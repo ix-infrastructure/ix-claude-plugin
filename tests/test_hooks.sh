@@ -57,7 +57,7 @@ section() { printf '\n── %s ────────────────
 hook_event_for() {
   case "$1" in
     ix-briefing.sh) echo "UserPromptSubmit" ;;
-    ix-intercept.sh|ix-bash.sh|ix-pre-edit.sh|ix-read.sh) echo "PreToolUse" ;;
+    ix-intercept.sh|ix-bash.sh|ix-pre-edit.sh) echo "PreToolUse" ;;
     ix-ingest.sh|ix-dependents.sh) echo "PostToolUse" ;;
     ix-annotate.sh|ix-map.sh) echo "Stop" ;;
     *) echo "" ;;
@@ -127,16 +127,14 @@ run_hook() {
   _HOOK_EVENT=$(hook_event_for "$(basename "${_hook}")")
   _RC=0
   # IX_LEDGER_MODE=off: skip async ledger writes (not relevant to hook output)
-  # IX_INGEST_INJECT=off: silence ingest injection
   # IX_ERROR_MODE=off: suppress error-log writes during tests
-  # TMPDIR per-run: prevents read-cache TTL bleed between test cases
+  # TMPDIR per-run: prevents cache bleed between test cases
   _OUT=$(env \
     TMPDIR="${_run_tmp}" \
     IX_HEALTH_CACHE="${_run_tmp}/ix-healthy" \
     IX_MAP_DEBOUNCE_FILE="${_run_tmp}/ix-map-last" \
     IX_MAP_LOCK_PATH="${_run_tmp}/ix-map.lock" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="off" \
     "$@" \
     PATH="${TESTS_DIR}:${PATH}" \
@@ -156,7 +154,6 @@ run_hook_with_debug_log() {
     IX_MAP_DEBOUNCE_FILE="${_run_tmp}/ix-map-last" \
     IX_MAP_LOCK_PATH="${_run_tmp}/ix-map.lock" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="off" \
     IX_DEBUG_LOG="${_IX_DEBUG_LOG}" \
     "$@" \
@@ -187,7 +184,6 @@ run_hook_with_error_ledger() {
     IX_MAP_DEBOUNCE_FILE="${_run_tmp}/ix-map-last" \
     IX_MAP_LOCK_PATH="${_run_tmp}/ix-map.lock" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="local" \
     IX_DEBUG_LOG="${_IX_DEBUG_LOG}" \
     "$@" \
@@ -553,7 +549,6 @@ _RC=0
 _OUT=$(env \
   TMPDIR="$(mktemp -d -p "${TEST_TMPDIR}")" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   IX_ANNOTATE_MODE="brief" \
   IX_ANNOTATE_CHANNEL="modelSuffix" \
@@ -581,7 +576,6 @@ for _ch in systemMessage modelSuffix both; do
   _OUT=$(env \
     TMPDIR="$(mktemp -d -p "${TEST_TMPDIR}")" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="off" \
     IX_ANNOTATE_MODE="brief" \
     IX_ANNOTATE_CHANNEL="${_ch}" \
@@ -633,7 +627,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_briefing_repeat_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_briefing_repeat_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   IX_ANNOTATE_MODE="brief" \
   IX_ANNOTATE_CHANNEL="modelSuffix" \
@@ -648,7 +641,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_briefing_repeat_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_briefing_repeat_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   IX_ANNOTATE_MODE="brief" \
   IX_ANNOTATE_CHANNEL="modelSuffix" \
@@ -751,7 +743,7 @@ _BFR_TTL_CACHE="${_BFR_TTL}/ix-plugin-cache-$(id -u)/briefing-$(
 _RC=0
 _OUT=$(env TMPDIR="${_BFR_TTL}" \
   IX_HEALTH_CACHE="${_BFR_TTL}/ix-healthy" \
-  IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+  IX_LEDGER_MODE="off" IX_ERROR_MODE="off" \
   IX_ANNOTATE_MODE="off" \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
   PATH="${TESTS_DIR}:${PATH}" \
@@ -1142,77 +1134,6 @@ elif ! echo "${_OUT}" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
 else
   pass "intercept/structured block output mode"
 fi
-
-# ═════════════════════════════════════════════════════════════════════════════
-# ix-read.sh — DISABLED (not registered in hooks/hooks.json)
-#
-# This hook is a placeholder. It is NOT in the active hook registry and will
-# never fire in production. These tests exercise the script logic directly
-# to catch regressions if the hook is re-enabled in the future.
-#
-# No-ops: binary file extensions (.bin, .png, etc.)
-# Manual smoke test: n/a — hook is disabled
-# ═════════════════════════════════════════════════════════════════════════════
-section "ix-read.sh"
-
-# Normal source file with high-risk overview → additionalContext
-run_hook ix-read.sh "${FX_IN}/read_normal.json"
-assert_additional_context "read/normal source file"
-
-# Binary file → skipped by extension filter → no output
-run_hook ix-read.sh "${FX_IN}/read_binary.json"
-assert_empty "read/binary file skipped"
-
-# Test file → SKIP_IMPACT=1 (impact not run), but overview still injects
-run_hook ix-read.sh "${FX_IN}/read_test_file.json"
-assert_additional_context "read/test file (impact skipped, overview injected)"
-
-# Empty overview + low impact → both parts empty → no output
-run_hook ix-read.sh "${FX_IN}/read_normal.json" \
-  IX_MOCK_OVERVIEW_FILE="${FX_IX}/overview_empty.json" \
-  IX_MOCK_IMPACT_FILE="${FX_IX}/impact_low.json"
-assert_empty "read/empty overview + low impact → no output"
-
-# ix returns error → graceful degradation → no output
-run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_MOCK_FAIL=1
-assert_empty "read/ix failure degrades gracefully"
-
-# Structured output format
-run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_HOOK_OUTPUT_STYLE=structured
-assert_structured "read/structured output mode"
-
-# ── Non-zero exit WITH a body (Ix#547) ───────────────────────────────────────
-#
-# Unlike pre-edit, this hook never lost the body -- it is written to a temp file
-# and read after `wait` regardless of exit status. What it lost was the
-# *judgement*: every file opened that is not in the graph filed an ix error,
-# which is a routine outcome rather than a fault, and buries real failures.
-# These pin that the output is unchanged when ix exits non-zero with a body.
-
-run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_MOCK_OVERVIEW_EXIT=1 IX_MOCK_IMPACT_EXIT=1
-assert_additional_context "read/non-zero exit with a body still injects context"
-
-# Both commands exit non-zero with an unresolved-target record: nothing usable
-# to inject, and still no crash under `set -euo pipefail`.
-run_hook ix-read.sh "${FX_IN}/read_normal.json" \
-  IX_MOCK_OVERVIEW_EXIT=1 IX_MOCK_IMPACT_EXIT=1 \
-  IX_MOCK_OVERVIEW_FILE="${FX_IX}/unresolved_target.json" \
-  IX_MOCK_IMPACT_FILE="${FX_IX}/unresolved_target.json"
-assert_empty "read/unresolved target on both commands is silent"
-
-# Ix #853 exit codes on inventory, overview and impact at once: bodies are read
-# exactly as with exit 1, and nothing is filed unless a body is empty.
-_READ_EXITS="IX_MOCK_INVENTORY_EXIT IX_MOCK_OVERVIEW_EXIT IX_MOCK_IMPACT_EXIT"
-assert_like_exit_1 "read/results" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 0 ""
-assert_additional_context "read/results with exit 4 still inject context"
-for _body in ambiguous_target.json unresolved_target_suggestions.json workspace_not_mapped.json; do
-  assert_like_exit_1 "read/${_body%.json}" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 0 "" \
-    IX_MOCK_INVENTORY_FILE="${FX_IX}/${_body}" \
-    IX_MOCK_OVERVIEW_FILE="${FX_IX}/${_body}" \
-    IX_MOCK_IMPACT_FILE="${FX_IX}/${_body}"
-done
-assert_like_exit_1 "read/no bodies" ix-read.sh "${FX_IN}/read_normal.json" "${_READ_EXITS}" 3 "" \
-  IX_MOCK_INVENTORY_FILE=/dev/null IX_MOCK_OVERVIEW_FILE=/dev/null IX_MOCK_IMPACT_FILE=/dev/null
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-pre-edit.sh — Edit and Write
@@ -1990,7 +1911,6 @@ env \
   IX_HEALTH_CACHE="${_annotate_tmp}/ix-healthy" \
   IX_MAP_LOCK_PATH="${_annotate_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="on" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   IX_BLOCK_ON_HIGH_CONFIDENCE="1" \
   PATH="${TESTS_DIR}:${PATH}" \
@@ -2302,7 +2222,6 @@ _ext_case() {
     TMPDIR="${_ext_tmp}" \
     IX_HEALTH_CACHE="${_ext_tmp}/ix-healthy" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="off" \
     IX_DEBUG_LOG="${_log}" \
     PATH="${TESTS_DIR}:${PATH}" \
@@ -2361,7 +2280,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_poison_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_poison_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
@@ -2391,7 +2309,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_fifo_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_fifo_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
@@ -2421,7 +2338,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_sym_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_sym_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
@@ -2450,7 +2366,6 @@ _OUT=$(env \
   IX_MAP_DEBOUNCE_FILE="${_hijack_tmp}/ix-map-last" \
   IX_MAP_LOCK_PATH="${_hijack_tmp}/ix-map.lock" \
   IX_LEDGER_MODE="off" \
-  IX_INGEST_INJECT="off" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" 2>/dev/null) || _RC=$?
@@ -2722,8 +2637,6 @@ for _style in legacy structured; do
   assert_host_output "host/${_style}/PreToolUse ix-bash.sh"
   run_hook ix-pre-edit.sh "${FX_IN}/edit_high_risk.json" IX_HOOK_OUTPUT_STYLE="${_style}"
   assert_host_output "host/${_style}/PreToolUse ix-pre-edit.sh"
-  run_hook ix-read.sh "${FX_IN}/read_normal.json" IX_HOOK_OUTPUT_STYLE="${_style}"
-  assert_host_output "host/${_style}/PreToolUse ix-read.sh"
 done
 
 # A Glob denial is all the model gets in place of the Glob result, so it must
@@ -2764,7 +2677,6 @@ _timing_run() {
     TMPDIR="${_run_tmp}" \
     IX_HEALTH_CACHE="${_run_tmp}/ix-healthy" \
     IX_LEDGER_MODE="off" \
-    IX_INGEST_INJECT="off" \
     IX_ERROR_MODE="off" \
     "$@" \
     PATH="${TESTS_DIR}:${PATH}" \
@@ -2879,7 +2791,7 @@ fi
 _tm_ann=$(mktemp -d -p "${TEST_TMPDIR}")
 mkdir -p "${_tm_ann}/home"
 env HOME="${_tm_ann}/home" TMPDIR="${_tm_ann}" IX_HEALTH_CACHE="${_tm_ann}/ix-healthy" \
-  IX_LEDGER_MODE="on" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" PATH="${TESTS_DIR}:${PATH}" \
+  IX_LEDGER_MODE="on" IX_ERROR_MODE="off" PATH="${TESTS_DIR}:${PATH}" \
   bash "${HOOKS_DIR}/ix-intercept.sh" < "${FX_IN}/grep_plain.json" >/dev/null 2>&1 || true
 _TM_EMPTY_STDIN=$(_tm_fixture '')
 timed_case "timing/annotate empty stdin" ix-annotate.sh "${_TM_EMPTY_STDIN}" 0 -
@@ -2948,6 +2860,65 @@ elif ! [[ "${_line}" =~ ${_re} ]]; then
   fail "timing/no EPOCHREALTIME, BSD date" "line: ${_line}"
 else
   pass "timing/no EPOCHREALTIME, BSD date"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# hook registry — no dead hooks, no dead switches
+#
+# Every hooks/*.sh is either registered in hooks/hooks.json, a library the
+# hooks source, or a documented command-line helper. Every env default set in
+# hooks/lib/index.sh is read by some hook. A script or switch that nothing runs
+# still gets shell-checked, documented and kept in sync by hand, and reads as if
+# it did something.
+# ═════════════════════════════════════════════════════════════════════════════
+section "hook registry"
+
+# Sourced by the hooks (ix-errors.sh, ix-lib.sh, ix-ledger.sh) or run by hand
+# (ix-report.sh, documented in IX_CLAUDE_PLUGIN_OVERVIEW.md).
+_NOT_REGISTERED_OK=" ix-errors.sh ix-lib.sh ix-ledger.sh ix-report.sh "
+_registered=$(jq -r '.hooks[][].hooks[].command' "${HOOKS_DIR}/hooks.json" 2>/dev/null \
+  | sed 's|.*/hooks/||' | sort -u)
+if [ -z "${_registered}" ]; then
+  fail "registry/hooks.json parses" "no commands found in hooks/hooks.json"
+else
+  pass "registry/hooks.json parses"
+fi
+
+_unregistered=""
+for _f in "${HOOKS_DIR}"/*.sh; do
+  _b=$(basename "${_f}")
+  printf '%s\n' "${_registered}" | grep -qxF "${_b}" && continue
+  case "${_NOT_REGISTERED_OK}" in *" ${_b} "*) continue ;; esac
+  _unregistered="${_unregistered} ${_b}"
+done
+if [ -n "${_unregistered}" ]; then
+  fail "registry/every hook script is registered or a library/helper" "not in hooks.json:${_unregistered}"
+else
+  pass "registry/every hook script is registered or a library/helper"
+fi
+
+_missing=""
+while IFS= read -r _b; do
+  [ -n "${_b}" ] || continue
+  [ -f "${HOOKS_DIR}/${_b}" ] && [ -x "${HOOKS_DIR}/${_b}" ] || _missing="${_missing} ${_b}"
+done <<< "${_registered}"
+if [ -n "${_missing}" ]; then
+  fail "registry/every registered hook exists and is executable" "missing or not executable:${_missing}"
+else
+  pass "registry/every registered hook exists and is executable"
+fi
+
+# A default in lib/index.sh counts as read when a line in another hooks/ file
+# that is not a comment names it.
+_unread=""
+for _v in $(grep -oE '^[A-Z_]+="\$\{[A-Z_]+:-' "${HOOKS_DIR}/lib/index.sh" | cut -d= -f1); do
+  grep -rnw "${_v}" "${HOOKS_DIR}" --include='*.sh' --exclude=index.sh \
+    | grep -vqE '^[^:]+:[0-9]+:[[:space:]]*#' || _unread="${_unread} ${_v}"
+done
+if [ -n "${_unread}" ]; then
+  fail "registry/every env default in lib/index.sh is read by a hook" "never read:${_unread}"
+else
+  pass "registry/every env default in lib/index.sh is read by a hook"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
