@@ -73,8 +73,11 @@ ix_log_command ix impact "$REL_PATH" --format json
 # The body needs no special handling downstream: an error record has no
 # `riskLevel`, so RISK_LEVEL below falls to "unknown" and the hook exits quietly
 # on the existing "not in graph" branch, which is the honest outcome.
+#
+# Bounded (IX_IMPACT_TIMEOUT, 6s) inside the 10s hooks.json timeout: a timeout
+# is an empty body, so the edit goes ahead without a warning.
 _exit=0
-RAW=$(ix impact "$REL_PATH" --format json 2>"$_imp_err") || _exit=$?
+RAW=$(ix_run_bounded "${IX_IMPACT_TIMEOUT:-6}" ix impact "$REL_PATH" --format json 2>"$_imp_err") || _exit=$?
 if [ "$_exit" -ne 0 ] && [ -z "$RAW" ]; then
   ix_capture_async "ix" "ix-impact" "ix impact failed for $REL_PATH" "$_exit" \
     "ix impact $REL_PATH" "$(head -3 "$_imp_err")"

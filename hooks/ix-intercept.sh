@@ -164,8 +164,9 @@ elif [ "$TOOL" = "Glob" ]; then
   # not resolve, and the CLI is moving toward reporting that as a record with a
   # non-zero exit. Guarding now costs nothing and means this hook does not have
   # to be found again later.
+  # Bounded (IX_INVENTORY_TIMEOUT, 6s) inside the 10s hooks.json timeout.
   _exit=0
-  INV_RAW=$(ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || _exit=$?
+  INV_RAW=$(ix_run_bounded "${IX_INVENTORY_TIMEOUT:-6}" ix inventory "${INV_ARGS[@]}" 2>"$_inv_err") || _exit=$?
   if [ "$_exit" -ne 0 ] && [ -z "$INV_RAW" ]; then
     ix_capture_async "ix" "ix-inventory" "inventory failed" "$_exit" \
       "ix inventory '$INV_PATH' (from '$PATH_ARG')" "$(head -3 "$_inv_err")"

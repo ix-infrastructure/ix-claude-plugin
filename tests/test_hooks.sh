@@ -3022,6 +3022,140 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# A slow ix never outlasts a hook (#61)
+# ═════════════════════════════════════════════════════════════════════════════
+# When an ix call overran, Claude Code killed the hook at its hooks.json
+# timeout: the tool call or prompt waited the full 10 or 15 seconds and
+# whatever the hook had already found was lost. Every ix call goes through
+# ix_run_bounded, and the briefing hook shares one budget across its calls.
+section "slow ix: every hook exits before its timeout"
+
+# Static: no hook starts an ix lookup except through ix_run_bounded. Lines
+# continued with a backslash are joined first, so `ix_run_bounded N \` over
+# `ix status ...` reads as one command. Comment lines are skipped; `ix map` is
+# the detached refresh and is not a lookup.
+_unbounded=$(awk '{ if (buf == "") start = FNR
+                    if (sub(/\\$/, "")) { buf = buf $0 " "; next }
+                    print FILENAME ":" start ":" buf $0; buf = "" }' \
+    "${HOOKS_DIR}"/*.sh "${HOOKS_DIR}"/lib/*.sh 2>/dev/null \
+  | grep -E '(^[^:]+:[0-9]+:|\$\(|\||&&|;|\bthen|\belse|\bdo)[[:space:]]*(cd [^&]*&&[[:space:]]*)?ix (text|locate|impact|inventory|briefing|callers|context|status|hook|overview)\b' \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -n "${_unbounded}" ]; then
+  fail "slow/every ix lookup goes through ix_run_bounded" "$(printf '%s' "${_unbounded}" | tr '\n' ';')"
+else
+  pass "slow/every ix lookup goes through ix_run_bounded"
+fi
+
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  # The shared budget: a spent budget runs nothing, and a short one cuts a
+  # longer per-call bound down to what is left.
+  _bud_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  _OUT=$(env TMPDIR="${_bud_tmp}" IX_ERROR_MODE="off" IX_MOCK_CALL_LOG="${_bud_tmp}/calls" \
+    IX_MOCK_SLEEP=5 PATH="${TESTS_DIR}:${PATH}" \
+    bash -c '
+      source "$1/lib/index.sh"
+      ix_budget_start 0
+      _rc=0; ix_run_bounded 5 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s\n" "${_rc}"
+      ix_budget_start 1
+      _t0=$SECONDS
+      _rc=0; ix_run_bounded 10 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s %s\n" "${_rc}" "$(( SECONDS - _t0 ))"
+    ' _ "${HOOKS_DIR}" 2>/dev/null) || true
+  _bud_spent=$(printf '%s\n' "${_OUT}" | sed -n '1p')
+  _bud_short=$(printf '%s\n' "${_OUT}" | sed -n '2p')
+  _bud_calls=$(wc -l < "${_bud_tmp}/calls" 2>/dev/null | tr -d ' ' || echo 0)
+  if [ "${_bud_spent}" = "124" ] && [ "${_bud_calls:-0}" -le 1 ]; then
+    pass "slow/a spent budget runs no ix call"
+  else
+    fail "slow/a spent budget runs no ix call" "rc=${_bud_spent}, ix calls=${_bud_calls}"
+  fi
+  if [ "${_bud_short%% *}" = "124" ] && [ "${_bud_short##* }" -le 2 ]; then
+    pass "slow/the budget caps a longer per-call bound"
+  else
+    fail "slow/the budget caps a longer per-call bound" "expected '124 <=2', got '${_bud_short}'"
+  fi
+
+  # hooks.json timeout for a hook script.
+  _hook_timeout() {
+    jq -r --arg h "/hooks/$1" \
+      '[.hooks[][] | .hooks[] | select(.command | endswith($h)) | .timeout] | max' \
+      "${HOOKS_DIR}/hooks.json"
+  }
+
+  # Each case runs its hook against an ix that takes longer than any hook's
+  # timeout, all at once, so the section costs the slowest case and not the sum.
+  _slow_dir=$(mktemp -d -p "${TEST_TMPDIR}")
+  _slow_pids=()
+  _slow_names=()
+  # slow_case <name> <hook.sh> <input> [KEY=VAL ...]
+  slow_case() {
+    local _name="$1" _hook="$2" _input="$3"; shift 3
+    local _t="${_slow_dir}/${_name}"
+    mkdir -p "${_t}/tmp"
+    (
+      _s=$SECONDS
+      _rc=0
+      env TMPDIR="${_t}/tmp" IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+        IX_MOCK_SLEEP=20 IX_MOCK_CALL_LOG="${_t}/calls" "$@" PATH="${TESTS_DIR}:${PATH}" \
+        bash "${HOOKS_DIR}/${_hook}" < "${_input}" > "${_t}/out" 2>/dev/null || _rc=$?
+      printf '%s %s %s\n' "$(( SECONDS - _s ))" "${_rc}" "${_hook}" > "${_t}/result"
+    ) &
+    _slow_pids+=("$!")
+    _slow_names+=("${_name}")
+  }
+  # A state dir where the Pro probe has already answered "Pro" in this health
+  # window, so the hook goes straight to `ix briefing`.
+  _seed_pro() {
+    local _d="${_slow_dir}/$1/tmp/ix-plugin-cache-$(id -u)" _ts
+    mkdir -p "${_d}"; chmod 700 "${_d}"
+    _ts=$(date +%s)
+    echo "${_ts}" > "${_d}/healthy"; echo 1 > "${_d}/pro"; echo "${_ts}" > "${_d}/pro.ts"
+  }
+
+  _seed_pro briefing-pro-all-slow
+  _seed_pro briefing-pro-briefing-slow
+  _seed_pro briefing-small-budget
+  slow_case briefing-all-slow          ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-all-slow      ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-briefing-slow ix-briefing.sh   "${_START_FIXTURE}" IX_MOCK_SLEEP_ON="briefing"
+  slow_case briefing-small-budget      ix-briefing.sh   "${_START_FIXTURE}" IX_BRIEFING_BUDGET=3
+  slow_case grep-all-slow              ix-intercept.sh  "${FX_IN}/grep_plain.json"
+  slow_case grep-text-callers-slow     ix-intercept.sh  "${FX_IN}/grep_plain.json" IX_MOCK_SLEEP_ON="text callers"
+  slow_case glob-slow                  ix-intercept.sh  "${FX_IN}/glob_path.json"
+  slow_case bash-callers-slow          ix-bash.sh       "${_BASH_GREP_FIXTURE}" IX_MOCK_SLEEP_ON="callers"
+  slow_case pre-edit-slow              ix-pre-edit.sh   "${FX_IN}/edit_high_risk.json"
+  slow_case dependents-slow            ix-dependents.sh "${_DEP_BASH_FIXTURE}"
+  for _p in "${_slow_pids[@]}"; do wait "${_p}" 2>/dev/null || true; done
+
+  for _name in "${_slow_names[@]}"; do
+    read -r _el _rc _hk < "${_slow_dir}/${_name}/result" 2>/dev/null || { _el=99; _rc=?; _hk=?; }
+    _lim=$(_hook_timeout "${_hk}")
+    if [ "${_rc}" != "0" ]; then
+      fail "slow/${_name} exits 0" "rc=${_rc}"
+    elif [ "${_el}" -ge "${_lim:-0}" ]; then
+      fail "slow/${_name} finishes inside its ${_lim}s timeout" "took ${_el}s"
+    else
+      pass "slow/${_name} finishes inside its ${_lim}s timeout (${_el}s)"
+    fi
+  done
+
+  # What the hook found before the slow call is still delivered.
+  if grep -q "Starting points" "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null; then
+    pass "slow/a briefing that times out still delivers the starting points"
+  else
+    fail "slow/a briefing that times out still delivers the starting points" \
+      "got: $(head -c 160 "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null)"
+  fi
+  # The start points spend the whole 3s budget, so `ix briefing` never runs.
+  if grep -q '^briefing' "${_slow_dir}/briefing-small-budget/calls" 2>/dev/null; then
+    fail "slow/a spent briefing budget skips ix briefing" "calls: $(tr '\n' ';' < "${_slow_dir}/briefing-small-budget/calls")"
+  else
+    pass "slow/a spent briefing budget skips ix briefing"
+  fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Repo docs: what ships with the plugin, and what it claims exists
 # ═════════════════════════════════════════════════════════════════════════════
 # Everything in the repo root is installed with the plugin. The root keeps one
