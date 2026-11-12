@@ -12,8 +12,9 @@
 # not skipped over.
 #
 # Off by default, Grep and Glob alike: the Grep hint rarely names anything the
-# Grep itself does not find, and both run ix (`ix locate` + `ix text`, or
-# `ix inventory`) before the tool does. IX_GREP_INTERCEPT=on turns it on
+# Grep itself does not find, and both run ix (`ix locate` + `ix callers`, or
+# `ix inventory`) before the tool does; `ix text` runs only when the hook
+# blocks. IX_GREP_INTERCEPT=on turns it on
 # (together with the shell-grep hint in ix-bash.sh). So does
 # IX_BLOCK_ON_HIGH_CONFIDENCE=1: whoever asked for the block wants this hook.
 #
@@ -60,44 +61,62 @@ if [ "$TOOL" = "Grep" ]; then
     exit 0
   fi
 
-  PATH_ARG=$(echo "$INPUT" | jq -r '.tool_input.path // empty')
-  LANG_ARG=$(echo "$INPUT" | jq -r '.tool_input.type // empty')
-
-  ix_log "RUN ix text+locate pattern='$PATTERN' path='${PATH_ARG:-}' lang='${LANG_ARG:-}'"
+  # Only locate, as in ix-bash.sh: the Grep about to run lists every text hit
+  # itself, so `ix text` would only repeat them back. It runs below only when
+  # the hook blocks, where its line stands in for the Grep's own results.
+  # ix_query_intent has already sent every regex-looking pattern to the native
+  # Grep, so whatever reaches here is a plain name `ix locate` can take.
+  ix_log "RUN ix locate pattern='$PATTERN'"
   _t0=$(ix_now_ms)
-  ix_run_text_locate "$PATTERN" "$PATH_ARG" "$LANG_ARG"
+  _loc_err=$(mktemp)
+  ix_log_command ix locate "$PATTERN" --format json
+  _loc_status=0
+  _LOC_RAW=$(ix_run_bounded "${IX_LOCATE_TIMEOUT:-4}" ix locate "$PATTERN" --format json 2>"$_loc_err") || _loc_status=$?
+  if [ "$_loc_status" -ne 0 ]; then
+    # An unresolved target exits non-zero but still prints its JSON body
+    # (Ix#539): an answer, not a failure. Only an empty body is a failure worth
+    # filing -- otherwise every symbol that does not exist files an error.
+    if [ -n "$_LOC_RAW" ]; then
+      ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
+    else
+      ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
+        "ix locate '${PATTERN}'" "$(head -3 "$_loc_err")"
+    fi
+  fi
+  rm -f "$_loc_err"
+  [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate"; exit 0; }
 
-  [ -z "$_TEXT_RAW" ] && [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix results"; exit 0; }
-
-  ix_summarize_text "$_TEXT_RAW"
-  ix_summarize_locate "$_LOC_RAW"
-  ix_log "RESULTS text='${TEXT_PART:-<none>}' locate='${LOC_PART:-<none>}'"
-
-  # Gate on graph confidence from locate result
+  # Gate on graph confidence from locate result. One jq pass for the four
+  # fields: this hook holds up the Grep, and a jq process apiece cost as much
+  # as the rest of the hook's own work.
   CONF_WARN=""
   HOOK_MODE="allow"
+  LOC_PART=""
+  _confidence=""
   _loc_type=""
   _loc_name=""
   _loc_path=""
-  if [ -n "$_LOC_RAW" ]; then
-    _LOC_JSON=$(parse_json "$_LOC_RAW")
-    if [ -n "$_LOC_JSON" ]; then
-      _confidence=$(echo "$_LOC_JSON" | jq -r '(.confidence // (.resolvedTarget.confidence // 1)) | tostring' 2>/dev/null || echo "1")
-      ix_confidence_gate "${_confidence:-1}"
-      if [ "$CONF_GATE" = "drop" ]; then
-        LOC_PART=""
-        TEXT_PART=""
-        ix_log "CONFIDENCE gate=drop conf=${_confidence:-?} → suppressing ix injection"
-      fi
-      _loc_type=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.type // .resolvedTarget.kind // "unknown"' 2>/dev/null || echo "")
-      _loc_name=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.name // ""' 2>/dev/null || echo "")
-      _loc_path=$(echo "$_LOC_JSON" | jq -r '.resolvedTarget.path // ""' 2>/dev/null || echo "")
-      if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
-         [ "$CONF_GATE" = "ok" ] && [ -n "$_loc_name" ] && [ -n "$_loc_path" ]; then
-        HOOK_MODE="block"
-      fi
-      ix_log "CONFIDENCE gate=$CONF_GATE conf=${_confidence:-?} → mode=$HOOK_MODE"
+  _LOC_JSON=$(parse_json "$_LOC_RAW")
+  if [ -n "$_LOC_JSON" ]; then
+    _loc_fields=$(printf '%s' "$_LOC_JSON" | jq -r '
+      [ ((.confidence // (.resolvedTarget.confidence // 1)) | tostring),
+        (.resolvedTarget.type // .resolvedTarget.kind // "unknown"),
+        (.resolvedTarget.name // ""),
+        (.resolvedTarget.path // "") ]
+      | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' 2>/dev/null) || _loc_fields=""
+    [ -n "$_loc_fields" ] && IFS=$'\x1f' read -r _confidence _loc_type _loc_name _loc_path <<< "$_loc_fields" || true
+    [ -n "$_loc_name" ] && LOC_PART="symbol: ${_loc_name} (${_loc_type}${_loc_path:+, ${_loc_path##*/}})"
+    ix_log "RESULTS locate='${LOC_PART:-<none>}'"
+    ix_confidence_gate "${_confidence:-1}"
+    if [ "$CONF_GATE" = "drop" ]; then
+      LOC_PART=""
+      ix_log "CONFIDENCE gate=drop conf=${_confidence:-?} → suppressing ix injection"
     fi
+    if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
+       [ "$CONF_GATE" = "ok" ] && [ -n "$_loc_name" ] && [ -n "$_loc_path" ]; then
+      HOOK_MODE="block"
+    fi
+    ix_log "CONFIDENCE gate=$CONF_GATE conf=${_confidence:-?} → mode=$HOOK_MODE"
   fi
 
   # Augment with what the Grep about to run cannot say -- the definition and
@@ -105,7 +124,7 @@ if [ "$TOOL" = "Grep" ]; then
   # summary of `ix text`'s hits, or candidate names with a pointer to more ix
   # commands, only repeated them (see ix_definition_context).
   DEF_PART=""
-  [ -n "$_LOC_RAW" ] && ix_definition_context "$_LOC_RAW"
+  ix_definition_context "$_LOC_RAW"
   CONTEXT="$DEF_PART"
   if [ "$HOOK_MODE" != "block" ] && [ -n "$DEF_PART" ]; then
     HOOK_MODE="augment"
@@ -187,6 +206,28 @@ fi
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
 if [ "$TOOL" = "Grep" ]; then
   if [ "$HOOK_MODE" = "block" ]; then
+    # A block denies the Grep, so its reason is all the model gets: here, and
+    # only here, a one-line summary of the text hits is not a repeat. Bounded
+    # short (IX_TEXT_TIMEOUT, 2s) so locate + callers + text stay inside the
+    # hook's 10s timeout; on a failure or overrun the line is just left out.
+    TEXT_PART=""
+    PATH_ARG=$(echo "$INPUT" | jq -r '.tool_input.path // empty')
+    LANG_ARG=$(echo "$INPUT" | jq -r '.tool_input.type // empty')
+    _TEXT_ARGS=("$PATTERN" "--limit" "15" "--format" "json")
+    [ -n "$PATH_ARG" ] && _TEXT_ARGS+=("--path" "$PATH_ARG")
+    [ -n "$LANG_ARG" ] && _TEXT_ARGS+=("--language" "$LANG_ARG")
+    _text_err=$(mktemp)
+    ix_log_command ix text "${_TEXT_ARGS[@]}"
+    _text_status=0
+    _TEXT_RAW=$(ix_run_bounded "${IX_TEXT_TIMEOUT:-2}" ix text "${_TEXT_ARGS[@]}" 2>"$_text_err") || _text_status=$?
+    if [ "$_text_status" -ne 0 ] && [ -z "$_TEXT_RAW" ]; then
+      ix_capture_async "ix" "ix-text" "text search failed" "$_text_status" \
+        "ix text '${PATTERN}'" "$(head -3 "$_text_err")"
+    fi
+    rm -f "$_text_err"
+    ix_summarize_text "$_TEXT_RAW"
+    _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
+
     REASON="[ix text + ix locate] '${PATTERN}'"
     REASON="${REASON}"$'\n'"Found: ${_loc_name} (${_loc_type:-unknown}) at ${_loc_path}"
     [ -n "$TEXT_PART" ] && REASON="${REASON}"$'\n'"${TEXT_PART}"

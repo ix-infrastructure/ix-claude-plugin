@@ -29,9 +29,7 @@
 #   ix_run_bounded          — run a command under a wall-clock bound where possible
 #   ix_budget_start         — give the rest of this hook a shared budget for ix_run_bounded
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
-#   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
-#   ix_summarize_locate     — summarise locate results → LOC_PART
 
 # ── Portable millisecond timestamp ───────────────────────────────────────────
 # Usage: ix_now_ms
@@ -459,80 +457,6 @@ parse_json() {
   echo "$1" | awk '/^\[|^\{/{found=1} found{print}' | jq -c . 2>/dev/null || echo ""
 }
 
-# ── Run ix text + ix locate in parallel ──────────────────────────────────────
-# Usage: ix_run_text_locate PATTERN [PATH_ARG] [LANG_ARG]
-# Sets globals: _TEXT_RAW _LOC_RAW
-# Requires: ix_capture_async (from ix-errors.sh, no-op if absent)
-ix_run_text_locate() {
-  local _pattern="$1" _path_arg="${2:-}" _lang_arg="${3:-}"
-  local _text_tmp _loc_tmp _text_err _loc_err _TEXT_PID _LOC_PID _is_plain _loc_status
-  local _TEXT_ARGS=("$_pattern" "--limit" "15" "--format" "json")
-  [ -n "$_path_arg" ] && _TEXT_ARGS+=("--path" "$_path_arg")
-  [ -n "$_lang_arg" ] && _TEXT_ARGS+=("--language" "$_lang_arg")
-
-  _text_tmp=$(mktemp); _loc_tmp=$(mktemp)
-  _text_err=$(mktemp); _loc_err=$(mktemp)
-
-  # Both bounded (IX_TEXT_TIMEOUT, IX_LOCATE_TIMEOUT, 4s each, run side by
-  # side): a plain `wait` on an unbounded call held the hook until Claude Code
-  # killed it, losing the result of the call that did answer.
-  ix_log_command ix text "${_TEXT_ARGS[@]}"
-  ix_run_bounded "${IX_TEXT_TIMEOUT:-4}" ix text "${_TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
-  _TEXT_PID=$!
-
-  _is_plain=1
-  # Length guard: patterns shorter than 2 chars are too ambiguous for locate
-  [ "${#_pattern}" -lt 2 ] && _is_plain=0
-  # Block locate only for patterns that look like actual regex metacharacters:
-  #   quantifiers: * + ?
-  #   character classes: [ ]
-  #   groups: ( )
-  #   escape sequences: \d \w \s etc. (\\ followed by a word char)
-  #   quantifier braces with digit/comma: {N} or {N,M}
-  # Allowed: . _ - / : (all valid in qualified symbol names like module.method or config.ts)
-  if [ "$_is_plain" -eq 1 ] && \
-     printf '%s\n' "$_pattern" | grep -qE '[*+?]|[][()]|\\\w|\{[0-9]'; then
-    _is_plain=0
-  fi
-  _LOC_PID=""
-  if [ "$_is_plain" -eq 1 ]; then
-    ix_log_command ix locate "$_pattern" --format json
-    ix_run_bounded "${IX_LOCATE_TIMEOUT:-4}" ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
-    _LOC_PID=$!
-  else
-    ix_log "SKIP ix locate pattern treated as non-plain"
-  fi
-
-  wait "$_TEXT_PID" || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
-    "ix text '${_pattern}'" "$(head -3 "$_text_err")"
-  [ -n "$_LOC_PID" ] && {
-    # `_loc_status=0; wait || _loc_status=$?` rather than a bare `wait`: these
-    # hooks run under `set -euo pipefail`, so an unguarded non-zero `wait` kills
-    # the hook outright. The `||` also keeps $? intact, which `if ! wait` would
-    # have replaced with the negation's own result.
-    _loc_status=0
-    wait "$_LOC_PID" || _loc_status=$?
-    if [ "$_loc_status" -ne 0 ]; then
-      # An unresolved target exits non-zero but still prints its JSON body
-      # (Ix#539). That is an answer, not a failure -- filing it would record an
-      # error for every symbol a user asks about that does not happen to exist,
-      # and bury real locate failures in the ledger. Only an empty body is a
-      # genuine failure.
-      if [ -s "$_loc_tmp" ]; then
-        ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
-      else
-        ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
-          "ix locate '${_pattern}'" "$(head -3 "$_loc_err")"
-      fi
-    fi
-  }
-
-  _TEXT_RAW=$(cat "$_text_tmp")
-  _LOC_RAW=$(cat "$_loc_tmp" 2>/dev/null || echo "")
-
-  rm -f "$_text_tmp" "$_loc_tmp" "$_text_err" "$_loc_err"
-}
-
 # ── Summarise ix text results ─────────────────────────────────────────────────
 # Usage: ix_summarize_text RAW_OUTPUT
 # Sets global: TEXT_PART (empty string if no results)
@@ -794,22 +718,3 @@ ix_definition_context() {
   return 0
 }
 
-# ── Summarise ix locate results ───────────────────────────────────────────────
-# Usage: ix_summarize_locate RAW_OUTPUT
-# Sets global: LOC_PART (empty string if no results)
-ix_summarize_locate() {
-  local _raw="$1" _json _resolved _kind _file _cands
-  LOC_PART=""
-  _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
-  _resolved=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
-  if [ -n "$_resolved" ]; then
-    _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // ""' 2>/dev/null || echo "")
-    _file=$(echo "$_json" | jq -r '(.resolvedTarget.path // "") | split("/")[-1]' 2>/dev/null || echo "")
-    LOC_PART="symbol: ${_resolved} (${_kind}${_file:+, $_file})"
-  else
-    _cands=$(echo "$_json" | jq -r '.candidates[:3] | map(.name + " (" + .kind + ")") | join(", ")' 2>/dev/null || echo "")
-    [ -n "$_cands" ] && LOC_PART="candidates: ${_cands}"
-  fi
-  return 0
-}
