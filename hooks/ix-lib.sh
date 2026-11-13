@@ -698,6 +698,19 @@ ix_definition_context() {
   _cal_raw=$(ix_run_bounded "${IX_CALLERS_TIMEOUT:-4}" ix callers "$_name" --format json 2>/dev/null) || true
   _cal_json=$(parse_json "$_cal_raw")
   [ -z "$_cal_json" ] && return 0
+  # `ix callers` resolves the bare name again, and on a tie (a function and a
+  # method both named `build`) it can pick a different symbol than locate did:
+  # its callers would then be stated as this definition's. Keep them only when
+  # callers resolved to the same file and kind; when it reports no target
+  # (older CLIs), there is nothing to compare.
+  local _cal_path _cal_kind
+  _cal_path=$(echo "$_cal_json" | jq -r '.resolvedTarget.path // empty' 2>/dev/null || echo "")
+  _cal_kind=$(echo "$_cal_json" | jq -r '.resolvedTarget.kind // empty' 2>/dev/null || echo "")
+  if { [ -n "$_cal_path" ] && [ "$_cal_path" != "$_path" ]; } \
+     || { [ -n "$_cal_kind" ] && [ "$_kind" != "symbol" ] && [ "$_cal_kind" != "$_kind" ]; }; then
+    ix_log "SKIP callers of '${_name}' resolved to ${_cal_kind:-?} at ${_cal_path:-?}, not the ${_kind} at ${_path}"
+    return 0
+  fi
   _total=$(echo "$_cal_json" | jq -r '(.summary.total // (.results | length) // 0)' 2>/dev/null || echo 0)
   if [ "${_total:-0}" -eq 0 ]; then
     DEF_PART="${DEF_PART}; the graph has no callers for it"
