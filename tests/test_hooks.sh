@@ -1363,6 +1363,17 @@ else
   fail "bash/Type names first, then camelCase, then words" "calls: $(tr '\n' ';' < "${_order_log}")"
 fi
 
+# `ix callers` re-resolves the bare name and can land on another symbol of the
+# same name (a method where locate found the class): its callers are not this
+# definition's, so the answer keeps the definition and drops them.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_CALLERS_FILE="${FX_IX}/callers_other_target.json"
+assert_additional_context "bash/callers of another symbol: definition kept" "is defined at src/auth.ts"
+if printf '%s' "${_OUT}" | grep -q "called from"; then
+  fail "bash/callers of another symbol are not stated as this definition's" "got: ${_OUT}"
+else
+  pass "bash/callers of another symbol are not stated as this definition's"
+fi
+
 # A name answered once in a session is not answered again (same TMPDIR, so the
 # same state dir, and the same session_id).
 _seen_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
