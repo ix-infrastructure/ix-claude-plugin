@@ -113,6 +113,18 @@ Hook work:
 - Put reusable logic in `hooks/ix-lib.sh` or `hooks/lib/index.sh`, not inline everywhere.
 - Keep hook output short and attributable; these paths are latency-sensitive.
 - If a hook is intentionally disabled, leave that explicit in the script header as with `hooks/ix-read.sh`.
+- Hook output must be something Claude Code reads: context goes in
+  `hookSpecificOutput.additionalContext` with `hookEventName` set to the firing event
+  (a top-level `additionalContext` is ignored). Never emit `permissionDecision: "allow"`
+  (it skips the user's permission prompt), and never give a Stop hook
+  `additionalContext` (it makes the model take another turn). The test harness checks
+  every hook run against this.
+- Switch defaults live in `hooks/lib/index.sh`; per-call timeouts are
+  `${IX_*_TIMEOUT:-N}` at the call site. Every cache lives in the per-user `IX_STATE_DIR`
+  (`hooks/ix-lib.sh`), never at a fixed name in a shared `/tmp`.
+- Failures go to a local error ledger via `ix_capture_async` (`hooks/ix-errors.sh`,
+  `~/.local/share/ix/plugin/errors/errors.jsonl`, secrets redacted, nothing sent out;
+  `IX_ERROR_MODE=off` disables it). `bash hooks/ix-report.sh` shows the latest entries.
 
 Testing:
 - Run `bash tests/test_hooks.sh` after hook changes.
@@ -128,7 +140,10 @@ Manual checks:
 Docs and metadata:
 - `skills/shared.md` is the portable user-facing mental model.
 - `CLAUDE.md` is repo-local contributor guidance.
-- `IX_CLAUDE_PLUGIN_OVERVIEW.md` may lag runtime behavior; verify against `hooks/hooks.json` and tests before copying from it.
+- `README.md` is the user document and owns the hook table; `CHANGELOG.md` records changes under Unreleased.
+- Everything in the repo root ships with the plugin, so keep design notes and task
+  breakdowns out of the repo; `bash tests/test_hooks.sh` fails on any other root `*.md`,
+  and on a doc that names an `IX_*` switch or `ix-*.sh` hook the code does not have.
 - `.claude-plugin/plugin.json` carries plugin identity and version.
 - `.claude-plugin/marketplace.json` carries marketplace-facing metadata.
 

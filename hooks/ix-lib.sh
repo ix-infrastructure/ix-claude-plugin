@@ -28,10 +28,9 @@
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
 #   ix_run_bounded          — run a command under a wall-clock bound where possible
+#   ix_budget_start         — give the rest of this hook a shared budget for ix_run_bounded
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
-#   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
-#   ix_summarize_locate     — summarise locate results → LOC_PART
 
 # ── Portable millisecond timestamp ───────────────────────────────────────────
 # Usage: ix_now_ms
@@ -174,12 +173,8 @@ ix_request_auto_map() {
   echo "$_now" > "$_stamp" 2>/dev/null || true
 
   ix_log_command ix status --format json --root "$_root"
-  if command -v timeout >/dev/null 2>&1; then
-    _status=$(cd "$_root" && timeout "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" \
-      ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  else
-    _status=$(cd "$_root" && ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  fi
+  _status=$(cd "$_root" && ix_run_bounded "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" ix status --format json --root "$_root" 2>/dev/null) \
+    || _status=""
   if ! printf '%s' "$(parse_json "$_status")" | jq -e '.graphCompleted == true' >/dev/null 2>&1; then
     ix_log "AUTOMAP skip: $_root is not mapped (or ix status failed)"
     return 0
@@ -317,8 +312,26 @@ ix_health_check() {
 # under `set -euo pipefail`, an unbounded run is the fallback — the callers that
 # matter also cache their result before running, so an overrun costs one hook
 # invocation rather than every one after it.
+#
+# Under a budget (ix_budget_start), the bound is also cut to what is left of
+# it, and a spent budget runs nothing: it returns 124, the exit code of a
+# command `timeout` cut short, so callers handle it as they handle a timeout.
+# Cleared on load: a budget belongs to the hook that set it, never inherited.
+_IX_DEADLINE=""
 ix_run_bounded() {
-  local _secs="$1"; shift
+  local _secs="$1" _left; shift
+  if [[ "${_IX_DEADLINE:-}" =~ ^[0-9]+$ ]]; then
+    _left=$(( _IX_DEADLINE - $(date +%s) ))
+    if [ "$_left" -le 0 ]; then
+      ix_log "SKIP $* (hook budget spent)"
+      return 124
+    fi
+    # A non-integer per-call bound ("2.5") cannot be compared here; the
+    # budget's remainder bounds it instead.
+    if ! [[ "$_secs" =~ ^[0-9]+$ ]] || [ "$_secs" -eq 0 ] || [ "$_secs" -gt "$_left" ]; then
+      _secs="$_left"
+    fi
+  fi
   if command -v timeout >/dev/null 2>&1; then
     timeout "$_secs" "$@"
     return $?
@@ -328,6 +341,17 @@ ix_run_bounded() {
     return $?
   fi
   "$@"
+}
+
+# Usage: ix_budget_start <seconds>
+# Every ix_run_bounded after this, in this shell and its subshells, ends within
+# <seconds> of now: a hook that makes several ix calls in a row sets this below
+# its hooks.json timeout, so the sum of its calls cannot outlast the hook.
+# Whole seconds (`date +%s`), so a call can end up to a second past it.
+ix_budget_start() {
+  local _secs="${1:-0}"
+  [[ "$_secs" =~ ^[0-9]+$ ]] || _secs=0
+  _IX_DEADLINE=$(( $(date +%s) + _secs ))
 }
 
 # ── Pro check (TTL tied to health check) ─────────────────────────────────────
@@ -432,77 +456,6 @@ ix_log_injection() {
 # ── Helper: strip ix header noise, extract first JSON array/object ────────────
 parse_json() {
   echo "$1" | awk '/^\[|^\{/{found=1} found{print}' | jq -c . 2>/dev/null || echo ""
-}
-
-# ── Run ix text + ix locate in parallel ──────────────────────────────────────
-# Usage: ix_run_text_locate PATTERN [PATH_ARG] [LANG_ARG]
-# Sets globals: _TEXT_RAW _LOC_RAW
-# Requires: ix_capture_async (from ix-errors.sh, no-op if absent)
-ix_run_text_locate() {
-  local _pattern="$1" _path_arg="${2:-}" _lang_arg="${3:-}"
-  local _text_tmp _loc_tmp _text_err _loc_err _TEXT_PID _LOC_PID _is_plain _loc_status
-  local _TEXT_ARGS=("$_pattern" "--limit" "15" "--format" "json")
-  [ -n "$_path_arg" ] && _TEXT_ARGS+=("--path" "$_path_arg")
-  [ -n "$_lang_arg" ] && _TEXT_ARGS+=("--language" "$_lang_arg")
-
-  _text_tmp=$(mktemp); _loc_tmp=$(mktemp)
-  _text_err=$(mktemp); _loc_err=$(mktemp)
-
-  ix_log_command ix text "${_TEXT_ARGS[@]}"
-  ix text "${_TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
-  _TEXT_PID=$!
-
-  _is_plain=1
-  # Length guard: patterns shorter than 2 chars are too ambiguous for locate
-  [ "${#_pattern}" -lt 2 ] && _is_plain=0
-  # Block locate only for patterns that look like actual regex metacharacters:
-  #   quantifiers: * + ?
-  #   character classes: [ ]
-  #   groups: ( )
-  #   escape sequences: \d \w \s etc. (\\ followed by a word char)
-  #   quantifier braces with digit/comma: {N} or {N,M}
-  # Allowed: . _ - / : (all valid in qualified symbol names like module.method or config.ts)
-  if [ "$_is_plain" -eq 1 ] && \
-     printf '%s\n' "$_pattern" | grep -qE '[*+?]|[][()]|\\\w|\{[0-9]'; then
-    _is_plain=0
-  fi
-  _LOC_PID=""
-  if [ "$_is_plain" -eq 1 ]; then
-    ix_log_command ix locate "$_pattern" --format json
-    ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
-    _LOC_PID=$!
-  else
-    ix_log "SKIP ix locate pattern treated as non-plain"
-  fi
-
-  wait "$_TEXT_PID" || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
-    "ix text '${_pattern}'" "$(head -3 "$_text_err")"
-  [ -n "$_LOC_PID" ] && {
-    # `_loc_status=0; wait || _loc_status=$?` rather than a bare `wait`: these
-    # hooks run under `set -euo pipefail`, so an unguarded non-zero `wait` kills
-    # the hook outright. The `||` also keeps $? intact, which `if ! wait` would
-    # have replaced with the negation's own result.
-    _loc_status=0
-    wait "$_LOC_PID" || _loc_status=$?
-    if [ "$_loc_status" -ne 0 ]; then
-      # An unresolved target exits non-zero but still prints its JSON body
-      # (Ix#539). That is an answer, not a failure -- filing it would record an
-      # error for every symbol a user asks about that does not happen to exist,
-      # and bury real locate failures in the ledger. Only an empty body is a
-      # genuine failure.
-      if [ -s "$_loc_tmp" ]; then
-        ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
-      else
-        ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
-          "ix locate '${_pattern}'" "$(head -3 "$_loc_err")"
-      fi
-    fi
-  }
-
-  _TEXT_RAW=$(cat "$_text_tmp")
-  _LOC_RAW=$(cat "$_loc_tmp" 2>/dev/null || echo "")
-
-  rm -f "$_text_tmp" "$_loc_tmp" "$_text_err" "$_loc_err"
 }
 
 # ── Summarise ix text results ─────────────────────────────────────────────────
@@ -806,22 +759,3 @@ ix_definition_context() {
   return 0
 }
 
-# ── Summarise ix locate results ───────────────────────────────────────────────
-# Usage: ix_summarize_locate RAW_OUTPUT
-# Sets global: LOC_PART (empty string if no results)
-ix_summarize_locate() {
-  local _raw="$1" _json _resolved _kind _file _cands
-  LOC_PART=""
-  _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
-  _resolved=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
-  if [ -n "$_resolved" ]; then
-    _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // ""' 2>/dev/null || echo "")
-    _file=$(echo "$_json" | jq -r '(.resolvedTarget.path // "") | split("/")[-1]' 2>/dev/null || echo "")
-    LOC_PART="symbol: ${_resolved} (${_kind}${_file:+, $_file})"
-  else
-    _cands=$(echo "$_json" | jq -r '.candidates[:3] | map(.name + " (" + .kind + ")") | join(", ")' 2>/dev/null || echo "")
-    [ -n "$_cands" ] && LOC_PART="candidates: ${_cands}"
-  fi
-  return 0
-}

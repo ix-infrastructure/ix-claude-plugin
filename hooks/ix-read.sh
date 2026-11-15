@@ -88,13 +88,14 @@ _imp_err=$(mktemp)
 trap 'rm -f "$_inv_tmp" "$_ov_tmp" "$_imp_tmp" "$_inv_err" "$_ov_err" "$_imp_err"' EXIT
 
 _t0=$(ix_now_ms)
-ix inventory --kind file --path "$REL_PATH" --format json > "$_inv_tmp" 2>"$_inv_err" &
+# Side by side, each bounded like every other hook's ix calls (#61).
+ix_run_bounded "${IX_INVENTORY_TIMEOUT:-6}" ix inventory --kind file --path "$REL_PATH" --format json > "$_inv_tmp" 2>"$_inv_err" &
 _INV_PID=$!
-ix overview "$REL_PATH" --format json                     > "$_ov_tmp"  2>"$_ov_err"  &
+ix_run_bounded "${IX_OVERVIEW_TIMEOUT:-6}" ix overview "$REL_PATH" --format json > "$_ov_tmp"  2>"$_ov_err"  &
 _OV_PID=$!
 _IMP_PID=""
 if [ "$SKIP_IMPACT" -eq 0 ]; then
-  ix impact "$REL_PATH" --format json                     > "$_imp_tmp" 2>"$_imp_err" &
+  ix_run_bounded "${IX_IMPACT_TIMEOUT:-6}" ix impact "$REL_PATH" --format json > "$_imp_tmp" 2>"$_imp_err" &
   _IMP_PID=$!
 fi
 
