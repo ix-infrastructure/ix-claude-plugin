@@ -85,13 +85,19 @@ git -C "$PROJECT" -c user.email=ci@example.invalid -c user.name=ci commit -qm in
 
 # `ix` that resolves `ix locate` to computeTotal and hands every other command
 # to the real CLI: the only way to reach ix-intercept.sh's block branch, and the
-# `ix text` it runs there, without a backend (case 2b).
+# `ix text` it runs there, without a backend (case 2b). The locate output is
+# tests/fixtures/ix_outputs/locate_compute_total.json, so tests/test_hooks.sh's
+# fixture check holds it to the keys the fixtures record for `ix locate`: an
+# exact name match, which they print without a resolutionMode (a shape no test
+# has checked against a resolving real CLI; the hooks check such a match by
+# name), and no `confidence`.
+LOCATE_FIXTURE="${TESTS_DIR}/fixtures/ix_outputs/locate_compute_total.json"
+[ -f "$LOCATE_FIXTURE" ] || { echo "missing fixture: $LOCATE_FIXTURE" >&2; exit 2; }
 mkdir -p "${ROOT_TMP}/ix-resolves"
 {
   printf '#!/usr/bin/env bash\n'
   printf 'if [ "${1:-}" = "locate" ]; then\n'
-  printf "  printf '%%s\\\\n' '%s'\n" \
-    '{"resolvedTarget":{"name":"computeTotal","kind":"function","path":"src/math.js","confidence":0.95},"confidence":0.95}'
+  printf '  jq -c . "%s"\n' "$LOCATE_FIXTURE"
   printf '  exit 0\nfi\n'
   printf 'exec "%s" "$@"\n' "$(command -v ix)"
 } > "${ROOT_TMP}/ix-resolves/ix"
