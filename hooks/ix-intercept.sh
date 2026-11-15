@@ -99,12 +99,12 @@ if [ "$TOOL" = "Grep" ]; then
   _loc_type=""
   _loc_name=""
   _loc_path=""
+  _loc_resolved=0
   _LOC_JSON=$(parse_json "$_LOC_RAW")
   if [ -n "$_LOC_JSON" ]; then
-    _loc_resolved=0
     ix_locate_confident "$_LOC_JSON" && _loc_resolved=1
     _loc_fields=$(printf '%s' "$_LOC_JSON" | jq -r '
-      [ (.resolvedTarget.type // .resolvedTarget.kind // "unknown"),
+      [ (.resolvedTarget.kind // "unknown"),
         (.resolvedTarget.name // ""),
         (.resolvedTarget.path // "") ]
       | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' 2>/dev/null) || _loc_fields=""
@@ -122,9 +122,11 @@ if [ "$TOOL" = "Grep" ]; then
   # Augment with what the Grep about to run cannot say -- the definition and
   # its callers -- or with nothing. Its own results list every text hit, so a
   # summary of `ix text`'s hits, or candidate names with a pointer to more ix
-  # commands, only repeated them (see ix_definition_context).
+  # commands, only repeated them (see ix_definition_context). The JSON has
+  # already been through the gate above, so it is handed over rather than
+  # parsed and gated a second time; a turned-down resolution skips it.
   DEF_PART=""
-  ix_definition_context "$_LOC_RAW"
+  [ "$_loc_resolved" = "1" ] && ix_definition_context "$_LOC_RAW" "$_LOC_JSON"
   CONTEXT="$DEF_PART"
   if [ "$HOOK_MODE" != "block" ] && [ -n "$DEF_PART" ]; then
     HOOK_MODE="augment"

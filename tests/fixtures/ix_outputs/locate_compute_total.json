@@ -1,0 +1,13 @@
+{
+  "resolvedTarget": {
+    "id": "3c9e7d21-58a4-4f0b-b6e2-91d4a7c05f18",
+    "kind": "function",
+    "name": "computeTotal",
+    "path": "src/math.js"
+  },
+  "lineRange": {"start": 1, "end": 3},
+  "container": null,
+  "systemPath": [],
+  "diagnostics": [],
+  "hasMapData": true
+}

@@ -523,14 +523,19 @@ ix_confidence_gate() {
 # quiet (fail safe: no false deny, the native search still runs) and the
 # turned-down mode is written to IX_DEBUG_LOG.
 ix_locate_confident() {
-  local _ok
-  LOC_MODE=$(printf '%s' "$1" | jq -r '(.resolutionMode // "") | tostring' 2>/dev/null || echo "")
-  _ok=$(printf '%s' "$1" | jq -r '
-    if (.code // null) != null then "no"
-    elif ((.resolvedTarget.name // "") == "") or ((.resolvedTarget.path // "") == "") then "no"
-    else (.resolutionMode // "exact") as $m
-      | if ($m == "exact" or $m == "preferred-kind") then "yes" else "mode" end
-    end' 2>/dev/null || echo "no")
+  local _ok _res
+  # One jq pass for the verdict and the mode: the Grep hook waits on this.
+  _res=$(printf '%s' "$1" | jq -r '
+    ((.resolutionMode // "") | tostring | gsub("[\u001f\n]"; " ")) as $printed
+    | (if (.code // null) != null then "no"
+       elif ((.resolvedTarget.name // "") == "") or ((.resolvedTarget.path // "") == "") then "no"
+       else (.resolutionMode // "exact") as $m
+         | if ($m == "exact" or $m == "preferred-kind") then "yes" else "mode" end
+       end) + "\u001f" + $printed' 2>/dev/null) || _res=""
+  _ok="${_res%%$'\x1f'*}"
+  LOC_MODE=""
+  [ "$_res" != "$_ok" ] && LOC_MODE="${_res#*$'\x1f'}"
+  [ -n "$_ok" ] || _ok="no"
   # A named target turned down only for its mode is logged, so a release that
   # labels an ordinary exact match differently shows up in IX_DEBUG_LOG instead
   # of silencing the hints unnoticed.
@@ -717,17 +722,25 @@ ix_log() {
 # calls, is the part only the graph knows. `ix callers` runs bounded (IX_CALLERS_TIMEOUT, default 4s); a failure
 # or timeout leaves the definition on its own.
 ix_definition_context() {
-  local _raw="$1" _json _name _kind _path _start _end _where _cal_raw _cal_json _total _sites _more _dir
+  local _raw="$1" _json _fields _name _kind _path _start _end _where _cal_raw _cal_json _total _sites _more _dir
   DEF_PART=""
-  _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
-  _name=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
-  _path=$(echo "$_json" | jq -r '.resolvedTarget.path // empty' 2>/dev/null || echo "")
+  # A caller that has already parsed the output and passed it through
+  # ix_locate_confident (ix-intercept.sh) hands that JSON over as $2, so the
+  # gate's jq work and its debug-log line are not repeated.
+  if [ -n "${2:-}" ]; then
+    _json="$2"
+  else
+    _json=$(parse_json "$_raw")
+    [ -z "$_json" ] && return 0
+    ix_locate_confident "$_json" || return 0
+  fi
+  _fields=$(printf '%s' "$_json" | jq -r '
+    [ (.resolvedTarget.name // ""), (.resolvedTarget.path // ""),
+      (.resolvedTarget.kind // "symbol"), (.lineRange.start // ""), (.lineRange.end // "") ]
+    | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' 2>/dev/null) || _fields=""
+  [ -z "$_fields" ] && return 0
+  IFS=$'\x1f' read -r _name _path _kind _start _end <<< "$_fields" || true
   [ -z "$_name" ] || [ -z "$_path" ] && return 0
-  ix_locate_confident "$_json" || return 0
-  _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // "symbol"' 2>/dev/null || echo "symbol")
-  _start=$(echo "$_json" | jq -r '.lineRange.start // empty' 2>/dev/null || echo "")
-  _end=$(echo "$_json" | jq -r '.lineRange.end // empty' 2>/dev/null || echo "")
   _where="$_path"
   if [ -n "$_start" ]; then
     _where="${_where}:${_start}"

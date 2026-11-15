@@ -20,7 +20,7 @@ Makes the hooks tell Claude what a grep or a fresh session cannot, instead of wh
 
 In ix-bench, Ix delivered this way -- starting points beside the prompt and dependents after each edit, as a Claude Code mod -- was the best arm on 30 multi-file issues (17/90 solved vs 13/90 baseline, not significant; +8% cost).
 
-Hook tests: 757 passing (151 in 3.2.0).
+Hook tests: 802 passing (151 in 3.2.0).
 
 Also cuts what the plugin adds to every model call. Claude Code lists each model-invocable skill and each agent, name and description, in the system prompt of every request, used or not.
 

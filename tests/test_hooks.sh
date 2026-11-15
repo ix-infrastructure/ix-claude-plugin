@@ -1010,6 +1010,14 @@ for _fx in "${FX_IX}"/locate_*.json; do
     fail "fixture/$(basename "$_fx") has only keys ix locate prints" "unexpected: ${_bad}"
   fi
 done
+# tests/test_real_ix.sh fakes `ix locate` (no backend there can resolve one);
+# its output must be one of the fixtures checked above, not inline JSON.
+if grep -q 'fixtures/ix_outputs/locate_compute_total.json' "${TESTS_DIR}/test_real_ix.sh" && \
+   ! grep -q '"confidence"' "${TESTS_DIR}/test_real_ix.sh"; then
+  pass "real-ix locate shim prints a checked fixture"
+else
+  fail "real-ix locate shim prints a checked fixture" "tests/test_real_ix.sh inlines its own locate output"
+fi
 # The shape the CLI prints for an exact match -- no resolutionMode -- is the one
 # every positive hook test runs on, so the gate's default stays pinned.
 if jq -e 'has("resolutionMode") | not' "${FX_IX}/locate_resolved.json" >/dev/null; then
@@ -1049,6 +1057,25 @@ for _case in "scored:1" "some-future-mode:1" "<none>:0" "preferred-kind:0"; do
   fi
 done
 rm -f "$_lc_log"
+# The verdict and LOC_MODE come out of one jq pass; LOC_MODE is the mode as
+# printed, empty when there is none, whatever the verdict.
+for _case in "<none>:" "exact:exact" "preferred-kind:preferred-kind" "scored:scored" "ambiguous:ambiguous"; do
+  _mode=${_case%%:*}; _want=${_case#*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2"; printf "[%s]" "$LOC_MODE"' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  if [ "$_got" = "[${_want}]" ]; then
+    pass "lib/ix_locate_confident sets LOC_MODE for ${_mode}: [${_want}]"
+  else
+    fail "lib/ix_locate_confident sets LOC_MODE for ${_mode}: [${_want}]" "got '${_got}'"
+  fi
+done
+_got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "not json" && echo yes || echo "no[$LOC_MODE]"' _ "$HOOKS_DIR" 2>/dev/null)
+if [ "$_got" = "no[]" ]; then
+  pass "lib/ix_locate_confident rejects unparseable output with an empty LOC_MODE"
+else
+  fail "lib/ix_locate_confident rejects unparseable output with an empty LOC_MODE" "got '${_got}'"
+fi
 for _fx in locate_candidates.json locate_ambiguous_target.json locate_none.json; do
   _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$(cat "$2")" && echo yes || echo no' _ "$HOOKS_DIR" "${FX_IX}/${_fx}" 2>/dev/null)
   if [ "$_got" = "no" ]; then
@@ -1268,6 +1295,16 @@ assert_empty "intercept/fuzzy locate is never denied"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_empty "intercept/scored locate is never denied"
+# The Grep hook gates the locate output once and hands the result on: a
+# turned-down mode is logged once, and no `ix callers` runs for it.
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json"
+_got=$(grep -c "LOCATE target not used: resolutionMode=scored" "${_IX_DEBUG_LOG}" 2>/dev/null)
+if [ "$_got" = "1" ] && ! grep -q "CMD ix callers" "${_IX_DEBUG_LOG}"; then
+  pass "intercept/scored locate is gated once, without ix callers"
+else
+  fail "intercept/scored locate is gated once, without ix callers" "log: $(cat "${_IX_DEBUG_LOG}" 2>/dev/null)"
+fi
 # preferred-kind is one target the CLI resolved itself (an exact-name tie broken
 # by kind, or a near-exact score): injected, but never denied, because a
 # near-exact score is not the name the user typed.
