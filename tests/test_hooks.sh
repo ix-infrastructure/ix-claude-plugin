@@ -834,7 +834,7 @@ fi
 #   Correct input:  {"pattern":"AuthService","path":"src/"}  → block or augment
 #   No-op inputs:   "TODO", "timeout exceeded", regex like \w+\.ts$ → literal intent
 #   Expected stderr (block): ix locate 'AuthService' → AuthService at src/auth.ts [BLOCKED]
-#   Expected stderr (augment): ix text + ix locate: 'AuthService' → ...
+#   Expected stderr (augment): ix locate + callers: 'AuthService' → ...
 #
 # Glob — fires when: pattern has path structure (e.g. hooks/**/*.sh)
 #   Correct input:  {"pattern":"hooks/**/*.sh","path":"/repo"} → block or augment
@@ -990,6 +990,77 @@ assert_additional_context "intercept/grep plain symbol augments by default" \
 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+
+# Issue #60: the augment path injects the definition and its callers only, so
+# `ix text` (a ripgrep over the workspace) is never run for it. Only the block
+# branch, whose reason replaces the Grep's own results, still asks for it.
+_ICPT_CALLS="${TEST_TMPDIR}/intercept-calls.log"
+: > "${_ICPT_CALLS}"
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_additional_context "intercept/augment without ix text still names the definition" \
+  "is defined at src/auth.ts"
+assert_log_not_contains "intercept/augment logs no ix text command" "CMD ix text"
+assert_log_contains "intercept/augment logs ix locate" "CMD ix locate AuthService --format json"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/augment never runs ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/augment never runs ix text"
+fi
+
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_block_decision "intercept/block reason keeps the text-hit line" \
+  "4 text hits in auth.ts, auth.ts, auth.test.ts"
+if grep -qx 'text AuthService --limit 15 --format json --path src/' "${_ICPT_CALLS}"; then
+  pass "intercept/block runs ix text with the Grep's path"
+else
+  fail "intercept/block runs ix text with the Grep's path" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+fi
+
+# A low-confidence locate never blocks, so it must not pay for ix text either.
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_empty "intercept/low confidence with blocking on stays silent"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/no block, no ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/no block, no ix text"
+fi
+
+# `ix locate` runs under the same bound as in ix-bash.sh: a hung locate costs
+# IX_LOCATE_TIMEOUT, not the whole hook timeout, and the Grep answers alone.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_LOCATE_SLEEP=5 IX_LOCATE_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_empty "intercept/hung ix locate stays silent"
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT"
+  else
+    fail "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+
+  # The block branch's `ix text` has its own short bound; an overrun only
+  # drops the text-hit line, the Grep is still denied with the definition.
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+    IX_MOCK_TEXT_SLEEP=5 IX_TEXT_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_block_decision "intercept/hung ix text still blocks with the definition" \
+    "Found: AuthService (class) at src/auth.ts"
+  if printf '%s' "${_OUT}" | grep -q "text hits"; then
+    fail "intercept/hung ix text leaves out the text-hit line" "got: ${_OUT}"
+  else
+    pass "intercept/hung ix text leaves out the text-hit line"
+  fi
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/block ix text is bounded by IX_TEXT_TIMEOUT"
+  else
+    fail "intercept/block ix text is bounded by IX_TEXT_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+fi
 
 # TODO marker → literal search, hook stays silent
 run_hook ix-intercept.sh "${_GREP_TODO_FIXTURE}"
@@ -3063,6 +3134,251 @@ if [ "${_bl_size}" -le 1048576 ] && [ "${_bl_size}" -ge 400000 ] \
   pass "ix_trim_jsonl: default cap is 1 MiB (1.2 MB -> ${_bl_size} bytes, newest kept)"
 else
   fail "ix_trim_jsonl: default cap is 1 MiB" "size ${_bl_size}, last: $(tail -n 1 "${_bl_big}")"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# A slow ix never outlasts a hook (#61)
+# ═════════════════════════════════════════════════════════════════════════════
+# When an ix call overran, Claude Code killed the hook at its hooks.json
+# timeout: the tool call or prompt waited the full 10 or 15 seconds and
+# whatever the hook had already found was lost. Every ix call goes through
+# ix_run_bounded, and the briefing hook shares one budget across its calls.
+section "slow ix: every hook exits before its timeout"
+
+# Static: no hook starts an ix lookup except through ix_run_bounded. Lines
+# continued with a backslash are joined first, so `ix_run_bounded N \` over
+# `ix status ...` reads as one command. Comment lines are skipped; `ix map` is
+# the detached refresh and is not a lookup.
+_unbounded=$(awk '{ if (buf == "") start = FNR
+                    if (sub(/\\$/, "")) { buf = buf $0 " "; next }
+                    print FILENAME ":" start ":" buf $0; buf = "" }' \
+    "${HOOKS_DIR}"/*.sh "${HOOKS_DIR}"/lib/*.sh 2>/dev/null \
+  | grep -E '(^[^:]+:[0-9]+:|\$\(|\||&&|;|\bthen|\belse|\bdo)[[:space:]]*(cd [^&]*&&[[:space:]]*)?ix (text|locate|impact|inventory|briefing|callers|context|status|hook|overview)\b' \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -n "${_unbounded}" ]; then
+  fail "slow/every ix lookup goes through ix_run_bounded" "$(printf '%s' "${_unbounded}" | tr '\n' ';')"
+else
+  pass "slow/every ix lookup goes through ix_run_bounded"
+fi
+
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  # The shared budget: a spent budget runs nothing, and a short one cuts a
+  # longer per-call bound down to what is left.
+  _bud_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  _OUT=$(env TMPDIR="${_bud_tmp}" IX_ERROR_MODE="off" IX_MOCK_CALL_LOG="${_bud_tmp}/calls" \
+    IX_MOCK_SLEEP=5 PATH="${TESTS_DIR}:${PATH}" \
+    bash -c '
+      source "$1/lib/index.sh"
+      ix_budget_start 0
+      _rc=0; ix_run_bounded 5 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s\n" "${_rc}"
+      ix_budget_start 1
+      _t0=$SECONDS
+      _rc=0; ix_run_bounded 10 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s %s\n" "${_rc}" "$(( SECONDS - _t0 ))"
+    ' _ "${HOOKS_DIR}" 2>/dev/null) || true
+  _bud_spent=$(printf '%s\n' "${_OUT}" | sed -n '1p')
+  _bud_short=$(printf '%s\n' "${_OUT}" | sed -n '2p')
+  _bud_calls=$(wc -l < "${_bud_tmp}/calls" 2>/dev/null | tr -d ' ' || echo 0)
+  if [ "${_bud_spent}" = "124" ] && [ "${_bud_calls:-0}" -le 1 ]; then
+    pass "slow/a spent budget runs no ix call"
+  else
+    fail "slow/a spent budget runs no ix call" "rc=${_bud_spent}, ix calls=${_bud_calls}"
+  fi
+  if [ "${_bud_short%% *}" = "124" ] && [ "${_bud_short##* }" -le 2 ]; then
+    pass "slow/the budget caps a longer per-call bound"
+  else
+    fail "slow/the budget caps a longer per-call bound" "expected '124 <=2', got '${_bud_short}'"
+  fi
+
+  # hooks.json timeout for a hook script.
+  _hook_timeout() {
+    jq -r --arg h "/hooks/$1" \
+      '[.hooks[][] | .hooks[] | select(.command | endswith($h)) | .timeout] | max' \
+      "${HOOKS_DIR}/hooks.json"
+  }
+
+  # Each case runs its hook against an ix that takes longer than any hook's
+  # timeout, all at once, so the section costs the slowest case and not the sum.
+  _slow_dir=$(mktemp -d -p "${TEST_TMPDIR}")
+  _slow_pids=()
+  _slow_names=()
+  # slow_case <name> <hook.sh> <input> [KEY=VAL ...]
+  slow_case() {
+    local _name="$1" _hook="$2" _input="$3"; shift 3
+    local _t="${_slow_dir}/${_name}"
+    mkdir -p "${_t}/tmp"
+    (
+      _s=$SECONDS
+      _rc=0
+      env TMPDIR="${_t}/tmp" IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+        IX_MOCK_SLEEP=20 IX_MOCK_CALL_LOG="${_t}/calls" "$@" PATH="${TESTS_DIR}:${PATH}" \
+        bash "${HOOKS_DIR}/${_hook}" < "${_input}" > "${_t}/out" 2>/dev/null || _rc=$?
+      printf '%s %s %s\n' "$(( SECONDS - _s ))" "${_rc}" "${_hook}" > "${_t}/result"
+    ) &
+    _slow_pids+=("$!")
+    _slow_names+=("${_name}")
+  }
+  # A state dir where the Pro probe has already answered "Pro" in this health
+  # window, so the hook goes straight to `ix briefing`.
+  _seed_pro() {
+    local _d="${_slow_dir}/$1/tmp/ix-plugin-cache-$(id -u)" _ts
+    mkdir -p "${_d}"; chmod 700 "${_d}"
+    _ts=$(date +%s)
+    echo "${_ts}" > "${_d}/healthy"; echo 1 > "${_d}/pro"; echo "${_ts}" > "${_d}/pro.ts"
+  }
+
+  _seed_pro briefing-pro-all-slow
+  _seed_pro briefing-pro-briefing-slow
+  _seed_pro briefing-small-budget
+  slow_case briefing-all-slow          ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-all-slow      ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-briefing-slow ix-briefing.sh   "${_START_FIXTURE}" IX_MOCK_SLEEP_ON="briefing"
+  slow_case briefing-small-budget      ix-briefing.sh   "${_START_FIXTURE}" IX_BRIEFING_BUDGET=3
+  slow_case grep-all-slow              ix-intercept.sh  "${FX_IN}/grep_plain.json"
+  slow_case grep-text-callers-slow     ix-intercept.sh  "${FX_IN}/grep_plain.json" IX_MOCK_SLEEP_ON="text callers"
+  slow_case glob-slow                  ix-intercept.sh  "${FX_IN}/glob_path.json"
+  slow_case bash-callers-slow          ix-bash.sh       "${_BASH_GREP_FIXTURE}" IX_MOCK_SLEEP_ON="callers"
+  slow_case pre-edit-slow              ix-pre-edit.sh   "${FX_IN}/edit_high_risk.json"
+  slow_case dependents-slow            ix-dependents.sh "${_DEP_BASH_FIXTURE}"
+  for _p in "${_slow_pids[@]}"; do wait "${_p}" 2>/dev/null || true; done
+
+  for _name in "${_slow_names[@]}"; do
+    read -r _el _rc _hk < "${_slow_dir}/${_name}/result" 2>/dev/null || { _el=99; _rc=?; _hk=?; }
+    _lim=$(_hook_timeout "${_hk}")
+    if [ "${_rc}" != "0" ]; then
+      fail "slow/${_name} exits 0" "rc=${_rc}"
+    elif [ "${_el}" -ge "${_lim:-0}" ]; then
+      fail "slow/${_name} finishes inside its ${_lim}s timeout" "took ${_el}s"
+    else
+      pass "slow/${_name} finishes inside its ${_lim}s timeout (${_el}s)"
+    fi
+  done
+
+  # What the hook found before the slow call is still delivered.
+  if grep -q "Starting points" "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null; then
+    pass "slow/a briefing that times out still delivers the starting points"
+  else
+    fail "slow/a briefing that times out still delivers the starting points" \
+      "got: $(head -c 160 "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null)"
+  fi
+  # The start points spend the whole 3s budget, so `ix briefing` never runs.
+  if grep -q '^briefing' "${_slow_dir}/briefing-small-budget/calls" 2>/dev/null; then
+    fail "slow/a spent briefing budget skips ix briefing" "calls: $(tr '\n' ';' < "${_slow_dir}/briefing-small-budget/calls")"
+  else
+    pass "slow/a spent briefing budget skips ix briefing"
+  fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Repo docs: what ships with the plugin, and what it claims exists
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything in the repo root is installed with the plugin. The root keeps one
+# user document (README.md), one contributor document (CLAUDE.md) and the
+# changelog; a design note or task breakdown there ships to every user and
+# drifts from the hooks. And no current document may name an IX_* switch or a
+# hook script the code does not have. CHANGELOG.md is history: it may name
+# what was removed, and switches the Ix CLI itself reads.
+section "Repo docs"
+
+_REPO_DIR="$(cd "${TESTS_DIR}/.." && pwd)"
+
+# The docs the repo ships: in a git checkout, every *.md git knows about or
+# would add (tracked, plus untracked files .gitignore does not exclude), so a
+# contributor's ignored local notes (DESIGN.md, HANDOFF.md, ...) never fail
+# the suite; outside git, every *.md on disk. Prints repo-relative paths,
+# NUL-separated, skipping .git and paths deleted from the working tree.
+_list_md_files() {
+  local _dir="$1" _f
+  if git -C "${_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r -d '' _f; do
+      case "${_f}" in *.[mM][dD]) ;; *) continue ;; esac
+      [ -f "${_dir}/${_f}" ] && printf '%s\0' "${_f}"
+    done < <(git -C "${_dir}" ls-files -z --cached --others --exclude-standard)
+  else
+    (cd "${_dir}" && find . -path ./.git -prune -o -type f -iname '*.md' -print0) \
+      | while IFS= read -r -d '' _f; do printf '%s\0' "${_f#./}"; done
+  fi
+}
+
+_root_docs=$(_list_md_files "${_REPO_DIR}" | tr '\0' '\n' | grep -v / | LC_ALL=C sort -u | tr '\n' ' ')
+if [ "${_root_docs}" = "CHANGELOG.md CLAUDE.md README.md " ]; then
+  pass "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only"
+else
+  fail "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only" "found: ${_root_docs}"
+fi
+
+# Current docs: every shipped *.md, minus the changelog.
+_doc_files=()
+while IFS= read -r -d '' _f; do
+  [ "${_f}" = "CHANGELOG.md" ] && continue
+  _doc_files+=("${_REPO_DIR}/${_f}")
+done < <(_list_md_files "${_REPO_DIR}")
+# Where a switch can really live: the hook code (tests/test_hooks.sh still
+# sets a few switches no hook reads any more, so it does not count), or, for
+# the IX_MOCK_* knobs, the ix stub.
+_code_files=()
+while IFS= read -r -d '' _f; do
+  _code_files+=("${_f}")
+done < <(find "${HOOKS_DIR}" -type f ! -name '*.md' -print0)
+
+_missing_vars=""
+for _v in $(grep -ohE '\bIX_[A-Z0-9_]+' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  case "${_v}" in
+    IX_MOCK_*) grep -qw -- "${_v}" "${TESTS_DIR}/mock-ix.sh" ;;
+    *) grep -qw -- "${_v}" "${_code_files[@]}" ;;
+  esac 2>/dev/null || _missing_vars="${_missing_vars} ${_v}"
+done
+if [ -z "${_missing_vars}" ]; then
+  pass "docs/every IX_* variable a doc names exists in the hooks"
+else
+  fail "docs/every IX_* variable a doc names exists in the hooks" "missing:${_missing_vars}"
+fi
+
+_missing_hooks=""
+for _h in $(grep -ohE '\bix-[a-z0-9-]+\.sh\b' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  [ -f "${_REPO_DIR}/hooks/${_h}" ] || [ -f "${_REPO_DIR}/tests/${_h}" ] \
+    || _missing_hooks="${_missing_hooks} ${_h}"
+done
+if [ -z "${_missing_hooks}" ]; then
+  pass "docs/every ix-*.sh a doc names exists"
+else
+  fail "docs/every ix-*.sh a doc names exists" "missing:${_missing_hooks}"
+fi
+
+# _list_md_files: ignored local notes are skipped in git, found outside it.
+_LMD=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_LMD}/repo/docs" "${_LMD}/plain"
+(
+  cd "${_LMD}/repo" && git init -q . \
+    && printf 'DESIGN.md\n' > .gitignore \
+    && printf 'IX_SOMETHING_OLD\n' > DESIGN.md \
+    && : > README.md && : > docs/guide.md && : > NEW.md \
+    && git add README.md docs/guide.md .gitignore
+)
+_lmd_git=$(_list_md_files "${_LMD}/repo" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_git}" = "NEW.md README.md docs/guide.md " ]; then
+  pass "docs/doc listing skips gitignored notes, keeps tracked and new docs"
+else
+  fail "docs/doc listing skips gitignored notes, keeps tracked and new docs" "got: ${_lmd_git}"
+fi
+: > "${_LMD}/plain/README.md"; : > "${_LMD}/plain/DESIGN.md"
+_lmd_plain=$(_list_md_files "${_LMD}/plain" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_plain}" = "DESIGN.md README.md " ]; then
+  pass "docs/doc listing falls back to every *.md outside git"
+else
+  fail "docs/doc listing falls back to every *.md outside git" "got: ${_lmd_plain}"
+fi
+
+# Every hook hooks.json registers is named in README.md's hook table.
+_unlisted=""
+for _h in $(jq -r '.. | .command? // empty' "${HOOKS_DIR}/hooks.json" | sed 's|.*/||' | sort -u); do
+  grep -q -- "\`${_h}\`" "${_REPO_DIR}/README.md" || _unlisted="${_unlisted} ${_h}"
+done
+if [ -z "${_unlisted}" ]; then
+  pass "docs/README.md names every hook hooks.json registers"
+else
+  fail "docs/README.md names every hook hooks.json registers" "unlisted:${_unlisted}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

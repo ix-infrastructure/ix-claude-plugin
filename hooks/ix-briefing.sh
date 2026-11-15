@@ -24,6 +24,13 @@ INPUT=$(cat)
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_HOOK_DIR}/lib/index.sh"
 
+# One budget for every ix call below: start points (IX_ISSUE_START_TIMEOUT, 6s),
+# the Pro probe (IX_PRO_PROBE_TIMEOUT, 5s) and the briefing
+# (IX_BRIEFING_TIMEOUT, 8s) each keep their own bound, and together end within
+# IX_BRIEFING_BUDGET (12s) of the hook starting -- under the 15s hooks.json
+# timeout, so the hook still says what it has instead of being killed for it.
+ix_budget_start "${IX_BRIEFING_BUDGET:-12}"
+
 # One cache per project root, in the per-user state dir. A single shared
 # /tmp/ix-briefing-cache served project A's briefing to a prompt in project B
 # for the rest of the TTL.
@@ -103,7 +110,7 @@ if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   # text|json, and asking for a format it does not have never errors, it
   # silently renders text. Verified byte-identical output for both.
   _fetched_ok=1
-  BRIEFING=$(ix briefing --format text 2>"$_bfr_err") || {
+  BRIEFING=$(ix_run_bounded "${IX_BRIEFING_TIMEOUT:-8}" ix briefing --format text 2>"$_bfr_err") || {
     _exit=$?
     ix_capture_async "ix" "ix-briefing" "ix briefing failed" "$_exit" \
       "ix briefing" "$(head -3 "$_bfr_err")"
