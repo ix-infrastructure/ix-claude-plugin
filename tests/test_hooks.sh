@@ -985,11 +985,16 @@ fi
 # Ix CLI 0.12.1 prints LocateOutput: resolvedTarget {id, kind, name, path} (null
 # when nothing was picked), lineRange, container, systemPath (an array, or null
 # on an ambiguous or missed name), diagnostics, hasMapData, stale, and
-# resolutionMode -- which it leaves out on an exact name match and sets to
-# preferred-kind, scored, ambiguous, heuristic or none (a miss) otherwise
-# (later releases add fuzzy; "exact" is accepted should a release print it). An ambiguous name adds candidates; later
-# releases also give it an error code and message. Nothing else -- in particular
-# no `confidence`, which the hooks once gated on and the CLI never printed.
+# resolutionMode -- which these fixtures leave out on an exact name match and
+# set to preferred-kind, scored, ambiguous, heuristic or none (a miss) otherwise
+# (later releases add fuzzy; "exact" is accepted should a release print it). An
+# ambiguous name adds candidates; later releases also give it an error code and
+# message. Nothing else -- in particular no `confidence`, which the hooks once
+# gated on and the CLI never printed. This shape is what the fixtures record; no
+# test here or in tests/test_real_ix.sh has checked it against a resolving real
+# `ix locate`, so ix_locate_confident also reads a resolutionMode nested in
+# resolvedTarget (the shape `ix callers` prints) and checks an unlabelled match
+# by name rather than trusting a missing mode.
 for _fx in "${FX_IX}"/locate_*.json; do
   _bad=$(jq -r '
     (keys - ["resolvedTarget", "resolutionMode", "lineRange", "container", "systemPath",
@@ -1018,8 +1023,8 @@ if grep -q 'fixtures/ix_outputs/locate_compute_total.json' "${TESTS_DIR}/test_re
 else
   fail "real-ix locate shim prints a checked fixture" "tests/test_real_ix.sh inlines its own locate output"
 fi
-# The shape the CLI prints for an exact match -- no resolutionMode -- is the one
-# every positive hook test runs on, so the gate's default stays pinned.
+# The fixtures' shape for an exact match -- no resolutionMode -- is the one
+# every positive hook test runs on, so the name-checked default stays pinned.
 if jq -e 'has("resolutionMode") | not' "${FX_IX}/locate_resolved.json" >/dev/null; then
   pass "fixture/locate_resolved.json is an exact match without resolutionMode"
 else
@@ -1033,7 +1038,7 @@ for _case in "<none>:yes" "exact:yes" "preferred-kind:yes" "scored:no" "heuristi
   _mode=${_case%%:*}; _want=${_case##*:}
   if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
   else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
-  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" && echo yes || echo no' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService && echo yes || echo no' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
   if [ "$_got" = "$_want" ]; then
     pass "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}"
   else
@@ -1048,7 +1053,7 @@ for _case in "scored:1" "some-future-mode:1" "<none>:0" "preferred-kind:0"; do
   if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
   else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
   : > "$_lc_log"
-  IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2"' _ "$HOOKS_DIR" "$_body" >/dev/null 2>&1
+  IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService' _ "$HOOKS_DIR" "$_body" >/dev/null 2>&1
   _got=$(grep -c "LOCATE target not used: resolutionMode=${_mode}" "$_lc_log")
   if [ "$_got" = "$_want" ]; then
     pass "lib/ix_locate_confident logs a turned-down mode ${_mode}: ${_want}"
@@ -1063,7 +1068,7 @@ for _case in "<none>:" "exact:exact" "preferred-kind:preferred-kind" "scored:sco
   _mode=${_case%%:*}; _want=${_case#*:}
   if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
   else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
-  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2"; printf "[%s]" "$LOC_MODE"' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService; printf "[%s]" "$LOC_MODE"' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
   if [ "$_got" = "[${_want}]" ]; then
     pass "lib/ix_locate_confident sets LOC_MODE for ${_mode}: [${_want}]"
   else
@@ -1076,6 +1081,51 @@ if [ "$_got" = "no[]" ]; then
 else
   fail "lib/ix_locate_confident rejects unparseable output with an empty LOC_MODE" "got '${_got}'"
 fi
+# Which modes the real CLI prints, and where, is known only from fixtures, so
+# the gate does not take a missing mode on trust: an unlabelled target passes
+# only when its name is the one searched for (or the last segment of a dotted,
+# `::`, `#` or `/` name), and a mode nested in resolvedTarget (the shape
+# `ix callers` prints) is read when the top level has none. Cases are
+# "<query>|<body>|<verdict>|<LOC_MODE>|<LOC_EXACT>".
+_lc_nested() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts","resolutionMode":"%s"},"systemPath":[],"diagnostics":[]}' "$1" "$2"; }
+_lc_plain() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts"},"systemPath":[],"diagnostics":[]}' "$1"; }
+_lc_top() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts"},"resolutionMode":"%s","systemPath":[],"diagnostics":[]}' "$1" "$2"; }
+for _case in \
+    "AuthService|$(_lc_plain AuthService)|yes||1" \
+    "|$(_lc_plain AuthService)|no||0" \
+    "AuthServ|$(_lc_plain AuthService)|no||0" \
+    "authservice|$(_lc_plain AuthService)|no||0" \
+    "AuthService|$(_lc_plain AuthServiceImpl)|no||0" \
+    "auth.AuthService|$(_lc_plain AuthService)|yes||1" \
+    "auth::AuthService|$(_lc_plain AuthService)|yes||1" \
+    "Auth#AuthService|$(_lc_plain AuthService)|yes||1" \
+    "AuthService.login|$(_lc_plain AuthService)|no||0" \
+    "AuthService|$(_lc_top AuthService exact)|yes|exact|1" \
+    "Other|$(_lc_top AuthService exact)|yes|exact|0" \
+    "AuthService|$(_lc_top AuthService preferred-kind)|yes|preferred-kind|0" \
+    "AuthService|$(_lc_nested AuthService fuzzy)|no|fuzzy|0" \
+    "AuthService|$(_lc_nested AuthService scored)|no|scored|0" \
+    "AuthService|$(_lc_nested AuthService exact)|yes|exact|1" \
+    "AuthService|$(_lc_nested AuthService preferred-kind)|yes|preferred-kind|0"; do
+  IFS='|' read -r _q _body _want _wmode _wexact <<< "$_case"
+  _got=$(bash -c 'source "$1/ix-lib.sh"; if ix_locate_confident "$2" "$3"; then v=yes; else v=no; fi; printf "%s|%s|%s" "$v" "$LOC_MODE" "$LOC_EXACT"' \
+    _ "$HOOKS_DIR" "$_body" "$_q" 2>/dev/null)
+  _label="lib/ix_locate_confident query '${_q}' on $(printf '%s' "$_body" | jq -c '[.resolvedTarget.name, (.resolutionMode // .resolvedTarget.resolutionMode)]')"
+  if [ "$_got" = "${_want}|${_wmode}|${_wexact}" ]; then
+    pass "${_label} -> ${_want}|${_wmode}|${_wexact}"
+  else
+    fail "${_label} -> ${_want}|${_wmode}|${_wexact}" "got '${_got}'"
+  fi
+done
+# An unlabelled target turned down for its name is logged too.
+_lc_log=$(mktemp)
+IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService' _ "$HOOKS_DIR" "$(_lc_plain AuthServiceImpl)" >/dev/null 2>&1
+if grep -q "LOCATE target not used: no resolutionMode and name is not 'AuthService'" "$_lc_log"; then
+  pass "lib/ix_locate_confident logs an unlabelled target whose name is not the query"
+else
+  fail "lib/ix_locate_confident logs an unlabelled target whose name is not the query" "log: $(cat "$_lc_log")"
+fi
+rm -f "$_lc_log"
 for _fx in locate_candidates.json locate_ambiguous_target.json locate_none.json; do
   _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$(cat "$2")" && echo yes || echo no' _ "$HOOKS_DIR" "${FX_IX}/${_fx}" 2>/dev/null)
   if [ "$_got" = "no" ]; then
@@ -1084,13 +1134,14 @@ for _fx in locate_candidates.json locate_ambiguous_target.json locate_none.json;
     fail "lib/ix_locate_confident rejects ${_fx%.json}" "got '${_got}'"
   fi
 done
-# And no hook reads one it does not print.
-if grep -nE '\.confidence|resolvedTarget\.resolutionMode' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" \
+# And no hook reads a confidence ix locate does not print. (A resolutionMode
+# nested in resolvedTarget is read on purpose: see the cases above.)
+if grep -nE '\.confidence' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" \
      | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null; then
-  fail "locate readers use only fields ix locate prints" \
-    "$(grep -nE '\.confidence|resolvedTarget\.resolutionMode' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" | head -3)"
+  fail "locate readers read no confidence" \
+    "$(grep -nE '\.confidence' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" | head -3)"
 else
-  pass "locate readers use only fields ix locate prints"
+  pass "locate readers read no confidence"
 fi
 
 # Plain symbol → high-confidence exact match. The answer is injected either
@@ -1196,9 +1247,17 @@ assert_empty "intercept/grep TODO literal"
 run_hook ix-intercept.sh "${_GREP_PHRASE_FIXTURE}"
 assert_empty "intercept/grep phrase literal"
 
-# Dotted symbol → still treated as symbol lookup and blocks on exact match
+# Dotted symbol → still treated as symbol lookup and blocks on an exact match
+# of its last segment.
+_LOCATE_LOGIN_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.name = "login" | .resolvedTarget.kind = "method"' "${FX_IX}/locate_resolved.json" > "${_LOCATE_LOGIN_FIXTURE}"
+run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_LOGIN_FIXTURE}"
+assert_block_decision "intercept/grep dotted symbol blocks" "Found: login (method) at src/auth.ts"
+# An unlabelled target with some other name is not an exact match, whatever the
+# missing mode suggests: silent, never denied.
 run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
-assert_block_decision "intercept/grep dotted symbol blocks" "Found: AuthService (class) at src/auth.ts"
+assert_empty "intercept/unlabelled target named otherwise is never denied"
 
 # Regex pattern → literal search, hook stays silent
 run_hook ix-intercept.sh "${FX_IN}/grep_regex.json"
@@ -1322,6 +1381,25 @@ jq '. + {resolutionMode: "exact"}' "${FX_IX}/locate_resolved.json" > "${_LOCATE_
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${_LOCATE_EXACT_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/exact-mode locate blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+# If the CLI never prints a mode, a fuzzy pick (a different name) is neither
+# injected nor denied; if it nests the mode in resolvedTarget, a nested fuzzy
+# mode is read as fuzzy and a nested exact one as exact.
+_LOCATE_FUZZY_UNLABELLED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq 'del(.resolutionMode)' "${FX_IX}/locate_fuzzy.json" > "${_LOCATE_FUZZY_UNLABELLED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_UNLABELLED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy pick without a resolutionMode is never denied"
+_LOCATE_FUZZY_NESTED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.name = "AuthService" | .resolvedTarget.resolutionMode = .resolutionMode | del(.resolutionMode)' \
+  "${FX_IX}/locate_fuzzy.json" > "${_LOCATE_FUZZY_NESTED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_NESTED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy mode nested in resolvedTarget is never denied"
+_LOCATE_EXACT_NESTED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.resolutionMode = "exact"' "${FX_IX}/locate_resolved.json" > "${_LOCATE_EXACT_NESTED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_EXACT_NESTED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/exact mode nested in resolvedTarget blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
 # Nor does an ambiguous match deny the Grep, in either release's shape.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
   IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
@@ -1580,6 +1658,10 @@ assert_empty "bash/candidates without one definition stay silent"
 # A fuzzy resolution is not worth a line.
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
 assert_empty "bash/fuzzy resolution stays silent"
+# Nor is a fuzzy pick the CLI prints without a mode: its name is not the one
+# grepped for, so ix_locate_confident turns it down.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_UNLABELLED}"
+assert_empty "bash/fuzzy pick without a resolutionMode stays silent"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json"
 assert_empty "bash/scored resolution stays silent"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"

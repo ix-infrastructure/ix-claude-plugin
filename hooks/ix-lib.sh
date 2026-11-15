@@ -22,7 +22,7 @@
 #   ix_log_injection        — log exact injected hook content with escaped newlines
 #   parse_json              — strip ix header noise, extract first JSON value
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
-#   ix_locate_confident     — did ix locate pick one definition itself (exact or preferred-kind)? sets LOC_MODE
+#   ix_locate_confident     — did ix locate pick one definition itself (exact or preferred-kind)? sets LOC_MODE, LOC_EXACT
 #   ix_emit_context         — emit hookSpecificOutput.additionalContext for an event
 #   ix_hook_decide          — emit PreToolUse block/augment/allow output (legacy or structured block)
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
@@ -497,11 +497,13 @@ ix_confidence_gate() {
 }
 
 # ── Did ix locate resolve one definition? ────────────────────────────────────
-# Usage: ix_locate_confident LOCATE_JSON
+# Usage: ix_locate_confident LOCATE_JSON [QUERY]
 # Returns 0 when `ix locate --format json` resolved one definition the hooks can
 # stand behind: a resolvedTarget with a name and a path, no error `code`, and a
-# resolutionMode that names a definition the CLI picked itself. Sets global
-# LOC_MODE to the resolutionMode printed ("" when there is none).
+# resolutionMode that names a definition the CLI picked itself. Sets globals:
+#   LOC_MODE   the resolutionMode printed ("" when there is none)
+#   LOC_EXACT  1 when the target is an exact name match the hooks checked
+#              themselves (see below), else 0; the opt-in deny keys on this
 #
 # `ix locate` prints no confidence score, so the hooks used to read a
 # `confidence` that was never there, default it to 1 and pass every resolution.
@@ -509,37 +511,58 @@ ix_confidence_gate() {
 # the test fixtures record for Ix CLI 0.12.1 (exact, preferred-kind, scored,
 # ambiguous, heuristic, none; later releases add fuzzy). No test runs a
 # resolving `ix locate` against a real CLI (tests/test_real_ix.sh has no
-# backend), so treat the list as unverified there. They are read as:
-#   (no key)        an exact name match -- the fixtures omit the mode for these
-#   exact           the same, should a release print it
+# backend), so neither the list nor where the key sits is verified there. The
+# fixtures print it at the top level; `ix callers` prints it inside
+# resolvedTarget, so locate may too, and the top level is read first, then
+# resolvedTarget. They are read as:
+#   exact           an exact name match
 #   preferred-kind  one target, an exact-name tie broken by kind or a near-exact score
+#   (no key)        the fixtures omit the mode on an exact match. Not taken on
+#                   trust: it passes only when the target's name is QUERY (or
+#                   QUERY's last `.`/`::`/`#`/`/` segment), so a CLI that never
+#                   prints a mode cannot pass a fuzzy pick as exact
 #   anything else   a looser score, a heuristic or fuzzy pick, an ambiguous
 #                   name, a miss, or a mode added later
 # Only the first three count, so the hooks stay silent rather than inject on a
-# guess. The IX_BLOCK_ON_HIGH_CONFIDENCE=1 deny in ix-intercept.sh is narrower:
-# only the first two (LOC_MODE "" or "exact"). An ambiguous name never passes:
-# it carries resolutionMode "ambiguous" (and, in later releases, an error
-# `code`). If the CLI labels an ordinary match some other way, the hooks go
-# quiet (fail safe: no false deny, the native search still runs) and the
-# turned-down mode is written to IX_DEBUG_LOG.
+# guess. LOC_EXACT, for the IX_BLOCK_ON_HIGH_CONFIDENCE=1 deny in
+# ix-intercept.sh, is narrower: a mode of exact or none, AND the name check
+# above, whatever the mode says. An ambiguous name never passes: it carries
+# resolutionMode "ambiguous" (and, in later releases, an error `code`). If the
+# CLI labels an ordinary match some other way, the hooks go quiet (fail safe:
+# no false deny, the native search still runs) and the turned-down mode is
+# written to IX_DEBUG_LOG.
 ix_locate_confident() {
-  local _ok _res
-  # One jq pass for the verdict and the mode: the Grep hook waits on this.
-  _res=$(printf '%s' "$1" | jq -r '
-    ((.resolutionMode // "") | tostring | gsub("[\u001f\n]"; " ")) as $printed
+  local _ok _res _rest
+  # One jq pass for the verdict, the name check and the mode: the Grep hook
+  # waits on this.
+  _res=$(printf '%s' "$1" | jq -r --arg q "${2:-}" '
+    (.resolutionMode // (if (.resolvedTarget | type) == "object" then .resolvedTarget.resolutionMode else null end)) as $mode
+    | (($mode // "") | tostring | gsub("[\u001f\n]"; " ")) as $printed
+    | ((.resolvedTarget.name // "") | tostring) as $n
+    | ($q != "" and $n != "" and ($n == $q or $n == ($q | sub("^.*(\\.|::|#|/)"; ""))))  as $named
     | (if (.code // null) != null then "no"
-       elif ((.resolvedTarget.name // "") == "") or ((.resolvedTarget.path // "") == "") then "no"
-       else (.resolutionMode // "exact") as $m
-         | if ($m == "exact" or $m == "preferred-kind") then "yes" else "mode" end
-       end) + "\u001f" + $printed' 2>/dev/null) || _res=""
+       elif ($n == "") or ((.resolvedTarget.path // "") == "") then "no"
+       elif $mode == null then (if $named then "yes" else "unnamed" end)
+       elif ($mode == "exact" or $mode == "preferred-kind") then "yes"
+       else "mode" end)
+    + "\u001f" + (if $named and ($mode == null or $mode == "exact") then "1" else "0" end)
+    + "\u001f" + $printed' 2>/dev/null) || _res=""
   _ok="${_res%%$'\x1f'*}"
   LOC_MODE=""
-  [ "$_res" != "$_ok" ] && LOC_MODE="${_res#*$'\x1f'}"
+  LOC_EXACT=0
+  if [ "$_res" != "$_ok" ]; then
+    _rest="${_res#*$'\x1f'}"
+    LOC_EXACT="${_rest%%$'\x1f'*}"
+    [ "$_rest" != "$LOC_EXACT" ] && LOC_MODE="${_rest#*$'\x1f'}"
+    [ "$LOC_EXACT" = "1" ] || LOC_EXACT=0
+  fi
   [ -n "$_ok" ] || _ok="no"
-  # A named target turned down only for its mode is logged, so a release that
-  # labels an ordinary exact match differently shows up in IX_DEBUG_LOG instead
-  # of silencing the hints unnoticed.
+  # A named target turned down only for its mode, or for an unlabelled match
+  # whose name is not the one searched for, is logged, so a release that labels
+  # an ordinary exact match differently shows up in IX_DEBUG_LOG instead of
+  # silencing the hints unnoticed.
   [ "$_ok" = "mode" ] && ix_log "LOCATE target not used: resolutionMode=${LOC_MODE}"
+  [ "$_ok" = "unnamed" ] && ix_log "LOCATE target not used: no resolutionMode and name is not '${2:-}'"
   [ "$_ok" = "yes" ]
 }
 
@@ -706,7 +729,9 @@ ix_log() {
 }
 
 # ── What grep cannot say about a name ────────────────────────────────────────
-# Usage: ix_definition_context LOCATE_RAW
+# Usage: ix_definition_context LOCATE_RAW [LOCATE_JSON] [QUERY]
+# QUERY is the name searched for; ix_locate_confident checks an unlabelled
+# resolution against it.
 # Sets global: DEF_PART — empty unless locate resolved one definition by an
 # exact or preferred-kind match (ix_locate_confident). Then: where it is defined,
 # and who calls it, at the call site, nearest the definition's file first:
@@ -732,7 +757,7 @@ ix_definition_context() {
   else
     _json=$(parse_json "$_raw")
     [ -z "$_json" ] && return 0
-    ix_locate_confident "$_json" || return 0
+    ix_locate_confident "$_json" "${3:-}" || return 0
   fi
   _fields=$(printf '%s' "$_json" | jq -r '
     [ (.resolvedTarget.name // ""), (.resolvedTarget.path // ""),

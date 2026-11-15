@@ -100,7 +100,7 @@ fi
 rm -f "$_loc_err"
 [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate"; exit 0; }
 
-ix_definition_context "$_LOC_RAW"
+ix_definition_context "$_LOC_RAW" "" "$PATTERN"
 [ -z "$DEF_PART" ] && { ix_log "SKIP no single confident definition — grep answers alone"; exit 0; }
 CONTEXT="$DEF_PART"
 

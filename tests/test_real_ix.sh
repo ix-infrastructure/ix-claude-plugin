@@ -87,8 +87,10 @@ git -C "$PROJECT" -c user.email=ci@example.invalid -c user.name=ci commit -qm in
 # to the real CLI: the only way to reach ix-intercept.sh's block branch, and the
 # `ix text` it runs there, without a backend (case 2b). The locate output is
 # tests/fixtures/ix_outputs/locate_compute_total.json, so tests/test_hooks.sh's
-# fixture check holds it to the keys `ix locate` prints: an exact name match,
-# which the CLI prints without a resolutionMode, and no `confidence`.
+# fixture check holds it to the keys the fixtures record for `ix locate`: an
+# exact name match, which they print without a resolutionMode (a shape no test
+# has checked against a resolving real CLI; the hooks check such a match by
+# name), and no `confidence`.
 LOCATE_FIXTURE="${TESTS_DIR}/fixtures/ix_outputs/locate_compute_total.json"
 [ -f "$LOCATE_FIXTURE" ] || { echo "missing fixture: $LOCATE_FIXTURE" >&2; exit 2; }
 mkdir -p "${ROOT_TMP}/ix-resolves"

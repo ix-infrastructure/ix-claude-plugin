@@ -87,11 +87,14 @@ if [ "$TOOL" = "Grep" ]; then
   [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate"; exit 0; }
 
   # Gate on how locate resolved: only one definition the CLI picked itself (an
-  # exact or preferred-kind resolutionMode) may be injected
-  # (ix_locate_confident; `ix locate` prints no confidence score). The opt-in
-  # deny is narrower still: only an exact name match (no resolutionMode, or
-  # `exact`). preferred-kind can be a near-exact score rather than the name the
-  # user typed, which is enough for a hint but not for costing them a turn.
+  # exact or preferred-kind resolutionMode, or none and the pattern's name) may
+  # be injected (ix_locate_confident; `ix locate` prints no confidence score). The opt-in
+  # deny is narrower still: only an exact name match (LOC_EXACT: no
+  # resolutionMode or `exact`, and the target's name is the pattern). The deny
+  # checks the name itself rather than trust the mode alone, because which
+  # modes the real CLI prints is known only from fixtures. preferred-kind can be
+  # a near-exact score rather than the name the user typed, which is enough for
+  # a hint but not for costing them a turn.
   # One jq pass for the three target fields: this hook holds up the Grep, and
   # a jq process apiece cost as much as the rest of the hook's own work.
   HOOK_MODE="allow"
@@ -102,7 +105,7 @@ if [ "$TOOL" = "Grep" ]; then
   _loc_resolved=0
   _LOC_JSON=$(parse_json "$_LOC_RAW")
   if [ -n "$_LOC_JSON" ]; then
-    ix_locate_confident "$_LOC_JSON" && _loc_resolved=1
+    ix_locate_confident "$_LOC_JSON" "$PATTERN" && _loc_resolved=1
     _loc_fields=$(printf '%s' "$_LOC_JSON" | jq -r '
       [ (.resolvedTarget.kind // "unknown"),
         (.resolvedTarget.name // ""),
@@ -112,11 +115,11 @@ if [ "$TOOL" = "Grep" ]; then
     [ -n "$_loc_name" ] && LOC_PART="symbol: ${_loc_name} (${_loc_type}${_loc_path:+, ${_loc_path##*/}})"
     ix_log "RESULTS locate='${LOC_PART:-<none>}'"
     if [ "${IX_BLOCK_ON_HIGH_CONFIDENCE:-0}" = "1" ] && [ "$QUERY_INTENT" = "symbol" ] && \
-       [ "$_loc_resolved" = "1" ] && { [ -z "${LOC_MODE:-}" ] || [ "$LOC_MODE" = "exact" ]; } && \
+       [ "$_loc_resolved" = "1" ] && [ "${LOC_EXACT:-0}" = "1" ] && \
        [ -n "$_loc_name" ] && [ -n "$_loc_path" ]; then
       HOOK_MODE="block"
     fi
-    ix_log "RESOLUTION resolved=${_loc_resolved} mode=${LOC_MODE:-<none>} → hook=$HOOK_MODE"
+    ix_log "RESOLUTION resolved=${_loc_resolved} mode=${LOC_MODE:-<none>} exact=${LOC_EXACT:-0} → hook=$HOOK_MODE"
   fi
 
   # Augment with what the Grep about to run cannot say -- the definition and
@@ -126,7 +129,7 @@ if [ "$TOOL" = "Grep" ]; then
   # already been through the gate above, so it is handed over rather than
   # parsed and gated a second time; a turned-down resolution skips it.
   DEF_PART=""
-  [ "$_loc_resolved" = "1" ] && ix_definition_context "$_LOC_RAW" "$_LOC_JSON"
+  [ "$_loc_resolved" = "1" ] && ix_definition_context "$_LOC_RAW" "$_LOC_JSON" "$PATTERN"
   CONTEXT="$DEF_PART"
   if [ "$HOOK_MODE" != "block" ] && [ -n "$DEF_PART" ]; then
     HOOK_MODE="augment"
