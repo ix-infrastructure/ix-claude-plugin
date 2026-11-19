@@ -78,9 +78,11 @@ start`.
 
 The injected briefing is the text rendering, with a `Revision`, a last-ingest
 time, and a section per non-empty group: `Goals`, `Plans`, `Recent Decisions`,
-`Open Bugs`, `Recent Changes`. It is suppressed entirely when every group is
-empty, so its absence means either "no Pro" or "nothing to report" — both of
-which lead to the same place: skip the Pro steps.
+`Open Bugs`, `Recent Changes`. It is suppressed entirely when Goals, Plans,
+Recent Decisions and Open Bugs are all empty (Recent Changes alone does not
+count), and a Recent Changes section of parse events only (`rev N Parsed
+<file>`) is left out. Its absence means either "no Pro" or "nothing to
+report" — both of which lead to the same place: skip the Pro steps.
 
 ⚠ **`--format llm` does nothing on a Pro command.** @ix/pro declares only
 `text|json`, and asking for a format it does not have never errors — it silently

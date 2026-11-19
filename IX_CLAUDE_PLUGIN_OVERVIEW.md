@@ -163,7 +163,9 @@ otherwise.
 - Calls `ix briefing --format text`
 - Injects `[ix] Session briefing:` followed by the text briefing (active goals, plans,
   open bugs, recent decisions), capped at `IX_BRIEFING_MAX_CHARS` (default 2048).
-  A briefing with every section empty is suppressed, and still holds the TTL.
+  A briefing with no goals, plans, decisions or bugs is suppressed (Recent Changes
+  alone does not count), and still holds the TTL. In a kept briefing, a Recent
+  Changes section made only of `rev N Parsed <file>` rows is dropped before the cap.
 - Gives Claude standing context about what's being worked on before any reasoning
   begins
 

@@ -786,6 +786,93 @@ else
   pass "briefing/caps a runaway briefing"
 fi
 
+# ── Parse events are not a briefing ──────────────────────────────────────────
+# What a Pro install usually answers with: a header, a stale-graph warning and
+# "Recent Changes" made only of `rev N Parsed <file>` rows. No command, no
+# guidance, and a reason not to trust the graph. Not injected; the TTL holds.
+_bfr_ctx() { echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true; }
+
+run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_parsed_changes_only.txt"
+if [ "${_RC}" -ne 0 ]; then
+  fail "briefing/parse events alone are not injected" "expected exit 0, got ${_RC}"
+elif [ -n "${_OUT}" ]; then
+  fail "briefing/parse events alone are not injected" "expected no injection, got: ${_OUT:0:160}"
+else
+  pass "briefing/parse events alone are not injected"
+fi
+assert_log_contains "briefing/parse events alone are logged as a SKIP" \
+  "SKIP briefing (no goals, plans, decisions or bugs)"
+_bfr_cache=$(find "$(dirname "${_IX_DEBUG_LOG}")" -name 'briefing-*' -type f | head -1)
+if [ -n "${_bfr_cache}" ] && [ "$(wc -l < "${_bfr_cache}" | tr -d ' ')" -eq 1 ] \
+    && head -1 "${_bfr_cache}" | grep -qE '^[0-9]+$'; then
+  pass "briefing/parse events alone still hold the TTL"
+else
+  fail "briefing/parse events alone still hold the TTL" "cache: ${_bfr_cache:-<none>}"
+fi
+
+# With goals and decisions, the briefing goes in, minus a Recent Changes
+# section that is only parse events. The stale line stays with it.
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_goals_parsed_changes.txt"
+_ctx=$(_bfr_ctx)
+_expected="[ix] Session briefing:
+Ix Briefing
+  Revision: 2742
+  Last ingest: 2026-09-19T05:16:26.352Z
+  ⚠ Graph is stale (last ingest 3 days ago)
+
+Goals (1)
+  ◆ Mock goal
+
+Recent Decisions (1)
+  ◇ Mock decision"
+if [ "${_RC}" -ne 0 ]; then
+  fail "briefing/parse-only Recent Changes dropped from a kept briefing" "expected exit 0, got ${_RC}"
+elif [ "${_ctx}" = "${_expected}" ]; then
+  pass "briefing/parse-only Recent Changes dropped from a kept briefing"
+else
+  fail "briefing/parse-only Recent Changes dropped from a kept briefing" "got: ${_ctx}"
+fi
+
+# A Recent Changes section with one row that is not a parse event is a real
+# change: kept verbatim.
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_goals_real_changes.txt"
+_ctx=$(_bfr_ctx)
+if [ "${_RC}" -ne 0 ]; then
+  fail "briefing/Recent Changes with a real change kept verbatim" "expected exit 0, got ${_RC}"
+elif [ "${_ctx}" = "[ix] Session briefing:"$'\n'"$(cat "${FX_IX}/briefing_goals_real_changes.txt")" ]; then
+  pass "briefing/Recent Changes with a real change kept verbatim"
+else
+  fail "briefing/Recent Changes with a real change kept verbatim" "got: ${_ctx}"
+fi
+
+# The cap applies to what is sent: parse events dropped first do not count.
+{
+  echo "Ix Briefing"
+  echo "  Revision: 1"
+  echo ""
+  echo "Goals (1)"
+  echo "  ◆ Mock goal"
+  echo ""
+  echo "Recent Changes (100)"
+  for _i in $(seq 1 100); do echo "  rev ${_i} Parsed src/module_${_i}/a_reasonably_long_file_name.ts"; done
+} > "${_BFR_BIG}/parsed.txt"
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
+  IX_ANNOTATE_MODE="off" \
+  IX_BRIEFING_MAX_CHARS="512" \
+  IX_MOCK_BRIEFING_FILE="${_BFR_BIG}/parsed.txt"
+_ctx=$(_bfr_ctx)
+if [[ "${_ctx}" == *"Mock goal" ]] && [[ "${_ctx}" != *"truncated"* ]] && [[ "${_ctx}" != *"Parsed"* ]]; then
+  pass "briefing/cap applies after parse events are dropped"
+else
+  fail "briefing/cap applies after parse events are dropped" "got: ${_ctx:0:200}"
+fi
+
 # Only where the platform can enforce a bound. On a stock macOS there is no
 # `timeout`, and the stickiness above is what keeps the cost to one prompt.
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
@@ -1827,6 +1914,17 @@ if [ "$(printf '%s\n' "${_ctx}" | grep -c 'ix callers')" -eq 1 ]; then
   pass "start/tool hint is one line"
 else
   fail "start/tool hint is one line" "got: ${_ctx}"
+fi
+
+# A briefing of parse events only is dropped; the start points and the hint
+# still go in, and nothing else does.
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ANNOTATE_MODE=off \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_parsed_changes_only.txt"
+_ctx=$(_start_ctx)
+if [ "${_RC}" -eq 0 ] && [ "${_ctx}" = "${_expected}" ]; then
+  pass "start/start points without a parse-only briefing"
+else
+  fail "start/start points without a parse-only briefing" "got: ${_ctx:0:400}"
 fi
 
 # With a session briefing too: the hint closes the start points, before it.

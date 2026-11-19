@@ -1,0 +1,16 @@
+Ix Briefing
+  Revision: 2742
+  Last ingest: 2026-09-19T05:16:26.352Z
+  ⚠ Graph is stale (last ingest 3 days ago)
+
+Recent Changes (10)
+  rev 2742 Parsed src/auth.ts
+  rev 2741 Parsed src/auth-routes.ts
+  rev 2740 Parsed src/app.ts
+  rev 2739 Parsed src/session.ts
+  rev 2738 Parsed src/token.ts
+  rev 2737 Parsed src/db.ts
+  rev 2736 Parsed src/config.ts
+  rev 2735 Parsed src/logger.ts
+  rev 2734 Parsed tests/auth.test.ts
+  rev 2733 Parsed README.md
