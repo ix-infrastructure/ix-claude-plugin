@@ -17,9 +17,13 @@
 #   IX_MOCK_EXPECT_INVENTORY_KIND — expected `--kind` arg for `ix inventory`
 #   IX_MOCK_BRIEFING_FILE  — path to fixture for `ix briefing` (default: briefing.json)
 #   IX_MOCK_BRIEFING_SLEEP=N — `ix briefing` sleeps N seconds before answering
+#   IX_MOCK_SLEEP=N        — every call sleeps N seconds before answering
+#   IX_MOCK_SLEEP_ON="a b" — ...or only calls to these subcommands
 #   IX_MOCK_FAIL=1         — exit 1 for all data-returning commands (simulates ix failure)
 #   IX_MOCK_LOCATE_EXIT=N     — `ix locate` exits N *after* printing its body
 #                            (Ix#539)
+#   IX_MOCK_LOCATE_SLEEP=N    — `ix locate` sleeps N seconds before answering
+#   IX_MOCK_TEXT_SLEEP=N      — `ix text` sleeps N seconds before answering
 #   IX_MOCK_OVERVIEW_EXIT=N   — `ix overview` exits N *after* printing its body
 #   IX_MOCK_IMPACT_EXIT=N     — `ix impact` exits N *after* printing its body
 #   IX_MOCK_INVENTORY_EXIT=N  — `ix inventory` exits N *after* printing its body
@@ -50,6 +54,14 @@
 
 SUBCOMMAND="${1:-}"
 if [ -n "${IX_MOCK_CALL_LOG:-}" ]; then printf '%s\n' "$*" >> "$IX_MOCK_CALL_LOG"; fi
+
+# A slow backend: IX_MOCK_SLEEP=N sleeps N seconds before answering, on every
+# subcommand or, with IX_MOCK_SLEEP_ON="text callers ...", on those only.
+if [ -n "${IX_MOCK_SLEEP:-}" ]; then
+  case " ${IX_MOCK_SLEEP_ON:-$SUBCOMMAND} " in
+    *" ${SUBCOMMAND} "*) sleep "${IX_MOCK_SLEEP}" ;;
+  esac
+fi
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FX="${SELF_DIR}/fixtures/ix_outputs"
 
@@ -87,6 +99,7 @@ fi
 
 case "$SUBCOMMAND" in
   text)
+    if [ -n "${IX_MOCK_TEXT_SLEEP:-}" ]; then sleep "${IX_MOCK_TEXT_SLEEP}"; fi
     cat "${IX_MOCK_TEXT_FILE:-${FX}/text_results.json}"
     ;;
   locate)
@@ -96,6 +109,7 @@ case "$SUBCOMMAND" in
         exit 1
       fi
     done
+    if [ -n "${IX_MOCK_LOCATE_SLEEP:-}" ]; then sleep "${IX_MOCK_LOCATE_SLEEP}"; fi
     cat "${IX_MOCK_LOCATE_FILE:-${FX}/locate_resolved.json}"
     # Ix#539 makes an unresolved target exit non-zero while still printing its
     # body. Simulated separately from IX_MOCK_FAIL, which suppresses output too:

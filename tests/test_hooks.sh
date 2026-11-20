@@ -913,7 +913,7 @@ fi
 #   Correct input:  {"pattern":"AuthService","path":"src/"}  → block or augment
 #   No-op inputs:   "TODO", "timeout exceeded", regex like \w+\.ts$ → literal intent
 #   Expected stderr (block): ix locate 'AuthService' → AuthService at src/auth.ts [BLOCKED]
-#   Expected stderr (augment): ix text + ix locate: 'AuthService' → ...
+#   Expected stderr (augment): ix locate + callers: 'AuthService' → ...
 #
 # Glob — fires when: pattern has path structure (e.g. hooks/**/*.sh)
 #   Correct input:  {"pattern":"hooks/**/*.sh","path":"/repo"} → block or augment
@@ -1060,15 +1060,263 @@ else
   pass "lib/ix_looks_like_secret snake-case alternation"
 fi
 
+# ── `ix locate --format json` fixtures match what the CLI prints ─────────────
+# Ix CLI 0.12.1 prints LocateOutput: resolvedTarget {id, kind, name, path} (null
+# when nothing was picked), lineRange, container, systemPath (an array, or null
+# on an ambiguous or missed name), diagnostics, hasMapData, stale, and
+# resolutionMode -- which these fixtures leave out on an exact name match and
+# set to preferred-kind, scored, ambiguous, heuristic or none (a miss) otherwise
+# (later releases add fuzzy; "exact" is accepted should a release print it). An
+# ambiguous name adds candidates; later releases also give it an error code and
+# message. Nothing else -- in particular no `confidence`, which the hooks once
+# gated on and the CLI never printed. This shape is what the fixtures record; no
+# test here or in tests/test_real_ix.sh has checked it against a resolving real
+# `ix locate`, so ix_locate_confident also reads a resolutionMode nested in
+# resolvedTarget (the shape `ix callers` prints) and checks an unlabelled match
+# by name rather than trusting a missing mode.
+for _fx in "${FX_IX}"/locate_*.json; do
+  _bad=$(jq -r '
+    (keys - ["resolvedTarget", "resolutionMode", "lineRange", "container", "systemPath",
+             "diagnostics", "hasMapData", "stale", "candidates", "code", "message"])
+    + (. as $o | ["resolvedTarget", "systemPath", "diagnostics"] | map(select(. as $k | $o | has($k) | not)) | map("<missing " + . + ">"))
+    + (if (.resolvedTarget | type) == "object" then (.resolvedTarget | keys - ["id", "kind", "name", "path"] | map("resolvedTarget." + .))
+       elif .resolvedTarget == null then [] else ["<resolvedTarget not an object>"] end)
+    + (if (.systemPath | type) == "array" or .systemPath == null then [] else ["<systemPath not an array or null>"] end)
+    + (if has("resolutionMode") | not then []
+       elif (.resolutionMode | IN("exact", "preferred-kind", "scored", "ambiguous", "heuristic", "none", "fuzzy")) then []
+       else ["<resolutionMode " + (.resolutionMode | tostring) + " is not one ix locate prints>"] end)
+    + (if (has("candidates") or has("code")) and .resolutionMode != "ambiguous" then ["<ambiguity record without resolutionMode ambiguous>"] else [] end)
+    + ([.. | objects | keys[] | select(. == "confidence")] | unique | map("<confidence>"))
+    | join(", ")' "$_fx" 2>&1)
+  if [ -z "$_bad" ]; then
+    pass "fixture/$(basename "$_fx") has only keys ix locate prints"
+  else
+    fail "fixture/$(basename "$_fx") has only keys ix locate prints" "unexpected: ${_bad}"
+  fi
+done
+# tests/test_real_ix.sh fakes `ix locate` (no backend there can resolve one);
+# its output must be one of the fixtures checked above, not inline JSON.
+if grep -q 'fixtures/ix_outputs/locate_compute_total.json' "${TESTS_DIR}/test_real_ix.sh" && \
+   ! grep -q '"confidence"' "${TESTS_DIR}/test_real_ix.sh"; then
+  pass "real-ix locate shim prints a checked fixture"
+else
+  fail "real-ix locate shim prints a checked fixture" "tests/test_real_ix.sh inlines its own locate output"
+fi
+# The fixtures' shape for an exact match -- no resolutionMode -- is the one
+# every positive hook test runs on, so the name-checked default stays pinned.
+if jq -e 'has("resolutionMode") | not' "${FX_IX}/locate_resolved.json" >/dev/null; then
+  pass "fixture/locate_resolved.json is an exact match without resolutionMode"
+else
+  fail "fixture/locate_resolved.json is an exact match without resolutionMode" "$(cat "${FX_IX}/locate_resolved.json")"
+fi
+
+# ix_locate_confident: which resolutionMode values name one definition.
+_lc_target='"resolvedTarget":{"id":"x","kind":"class","name":"AuthService","path":"src/auth.ts"},"systemPath":[],"diagnostics":[]'
+for _case in "<none>:yes" "exact:yes" "preferred-kind:yes" "scored:no" "heuristic:no" \
+             "ambiguous:no" "fuzzy:no" "none:no" "some-future-mode:no"; do
+  _mode=${_case%%:*}; _want=${_case##*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService && echo yes || echo no' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  if [ "$_got" = "$_want" ]; then
+    pass "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}"
+  else
+    fail "lib/ix_locate_confident resolutionMode ${_mode} -> ${_want}" "got '${_got}'"
+  fi
+done
+# A named target turned down only for its mode is logged, so a CLI that labels
+# an exact match differently is visible in IX_DEBUG_LOG rather than silent.
+_lc_log=$(mktemp)
+for _case in "scored:1" "some-future-mode:1" "<none>:0" "preferred-kind:0"; do
+  _mode=${_case%%:*}; _want=${_case##*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  : > "$_lc_log"
+  IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService' _ "$HOOKS_DIR" "$_body" >/dev/null 2>&1
+  _got=$(grep -c "LOCATE target not used: resolutionMode=${_mode}" "$_lc_log")
+  if [ "$_got" = "$_want" ]; then
+    pass "lib/ix_locate_confident logs a turned-down mode ${_mode}: ${_want}"
+  else
+    fail "lib/ix_locate_confident logs a turned-down mode ${_mode}: ${_want}" "log: $(cat "$_lc_log")"
+  fi
+done
+rm -f "$_lc_log"
+# The verdict and LOC_MODE come out of one jq pass; LOC_MODE is the mode as
+# printed, empty when there is none, whatever the verdict.
+for _case in "<none>:" "exact:exact" "preferred-kind:preferred-kind" "scored:scored" "ambiguous:ambiguous"; do
+  _mode=${_case%%:*}; _want=${_case#*:}
+  if [ "$_mode" = "<none>" ]; then _body="{${_lc_target}}"
+  else _body="{${_lc_target},\"resolutionMode\":\"${_mode}\"}"; fi
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService; printf "[%s]" "$LOC_MODE"' _ "$HOOKS_DIR" "$_body" 2>/dev/null)
+  if [ "$_got" = "[${_want}]" ]; then
+    pass "lib/ix_locate_confident sets LOC_MODE for ${_mode}: [${_want}]"
+  else
+    fail "lib/ix_locate_confident sets LOC_MODE for ${_mode}: [${_want}]" "got '${_got}'"
+  fi
+done
+_got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "not json" && echo yes || echo "no[$LOC_MODE]"' _ "$HOOKS_DIR" 2>/dev/null)
+if [ "$_got" = "no[]" ]; then
+  pass "lib/ix_locate_confident rejects unparseable output with an empty LOC_MODE"
+else
+  fail "lib/ix_locate_confident rejects unparseable output with an empty LOC_MODE" "got '${_got}'"
+fi
+# Which modes the real CLI prints, and where, is known only from fixtures, so
+# the gate does not take a missing mode on trust: an unlabelled target passes
+# only when its name is the one searched for (or the last segment of a dotted,
+# `::`, `#` or `/` name), and a mode nested in resolvedTarget (the shape
+# `ix callers` prints) is read when the top level has none. Cases are
+# "<query>|<body>|<verdict>|<LOC_MODE>|<LOC_EXACT>".
+_lc_nested() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts","resolutionMode":"%s"},"systemPath":[],"diagnostics":[]}' "$1" "$2"; }
+_lc_plain() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts"},"systemPath":[],"diagnostics":[]}' "$1"; }
+_lc_top() { printf '{"resolvedTarget":{"id":"x","kind":"class","name":"%s","path":"src/auth.ts"},"resolutionMode":"%s","systemPath":[],"diagnostics":[]}' "$1" "$2"; }
+for _case in \
+    "AuthService|$(_lc_plain AuthService)|yes||1" \
+    "|$(_lc_plain AuthService)|no||0" \
+    "AuthServ|$(_lc_plain AuthService)|no||0" \
+    "authservice|$(_lc_plain AuthService)|no||0" \
+    "AuthService|$(_lc_plain AuthServiceImpl)|no||0" \
+    "auth.AuthService|$(_lc_plain AuthService)|yes||1" \
+    "auth::AuthService|$(_lc_plain AuthService)|yes||1" \
+    "Auth#AuthService|$(_lc_plain AuthService)|yes||1" \
+    "AuthService.login|$(_lc_plain AuthService)|no||0" \
+    "AuthService|$(_lc_top AuthService exact)|yes|exact|1" \
+    "Other|$(_lc_top AuthService exact)|yes|exact|0" \
+    "AuthService|$(_lc_top AuthService preferred-kind)|yes|preferred-kind|0" \
+    "AuthService|$(_lc_nested AuthService fuzzy)|no|fuzzy|0" \
+    "AuthService|$(_lc_nested AuthService scored)|no|scored|0" \
+    "AuthService|$(_lc_nested AuthService exact)|yes|exact|1" \
+    "AuthService|$(_lc_nested AuthService preferred-kind)|yes|preferred-kind|0"; do
+  IFS='|' read -r _q _body _want _wmode _wexact <<< "$_case"
+  _got=$(bash -c 'source "$1/ix-lib.sh"; if ix_locate_confident "$2" "$3"; then v=yes; else v=no; fi; printf "%s|%s|%s" "$v" "$LOC_MODE" "$LOC_EXACT"' \
+    _ "$HOOKS_DIR" "$_body" "$_q" 2>/dev/null)
+  _label="lib/ix_locate_confident query '${_q}' on $(printf '%s' "$_body" | jq -c '[.resolvedTarget.name, (.resolutionMode // .resolvedTarget.resolutionMode)]')"
+  if [ "$_got" = "${_want}|${_wmode}|${_wexact}" ]; then
+    pass "${_label} -> ${_want}|${_wmode}|${_wexact}"
+  else
+    fail "${_label} -> ${_want}|${_wmode}|${_wexact}" "got '${_got}'"
+  fi
+done
+# An unlabelled target turned down for its name is logged too.
+_lc_log=$(mktemp)
+IX_DEBUG_LOG="$_lc_log" bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$2" AuthService' _ "$HOOKS_DIR" "$(_lc_plain AuthServiceImpl)" >/dev/null 2>&1
+if grep -q "LOCATE target not used: no resolutionMode and name is not 'AuthService'" "$_lc_log"; then
+  pass "lib/ix_locate_confident logs an unlabelled target whose name is not the query"
+else
+  fail "lib/ix_locate_confident logs an unlabelled target whose name is not the query" "log: $(cat "$_lc_log")"
+fi
+rm -f "$_lc_log"
+for _fx in locate_candidates.json locate_ambiguous_target.json locate_none.json; do
+  _got=$(bash -c 'source "$1/ix-lib.sh"; ix_locate_confident "$(cat "$2")" && echo yes || echo no' _ "$HOOKS_DIR" "${FX_IX}/${_fx}" 2>/dev/null)
+  if [ "$_got" = "no" ]; then
+    pass "lib/ix_locate_confident rejects ${_fx%.json}"
+  else
+    fail "lib/ix_locate_confident rejects ${_fx%.json}" "got '${_got}'"
+  fi
+done
+# And no hook reads a confidence ix locate does not print. (A resolutionMode
+# nested in resolvedTarget is read on purpose: see the cases above.)
+if grep -nE '\.confidence' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" \
+     | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null; then
+  fail "locate readers read no confidence" \
+    "$(grep -nE '\.confidence' "${HOOKS_DIR}/ix-lib.sh" "${HOOKS_DIR}/ix-intercept.sh" "${HOOKS_DIR}/ix-bash.sh" | head -3)"
+else
+  pass "locate readers read no confidence"
+fi
+
 # Plain symbol → high-confidence exact match. The answer is injected either
 # way; IX_BLOCK_ON_HIGH_CONFIDENCE decides whether the native Grep is also
 # denied, and it is off by default (denying costs a whole turn to save a call).
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
 assert_additional_context "intercept/grep plain symbol augments by default" \
-  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
 assert_block_decision "intercept/grep plain symbol blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+
+# Issue #60: the augment path injects the definition and its callers only, so
+# `ix text` (a ripgrep over the workspace) is never run for it. Only the block
+# branch, whose reason replaces the Grep's own results, still asks for it.
+_ICPT_CALLS="${TEST_TMPDIR}/intercept-calls.log"
+: > "${_ICPT_CALLS}"
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_additional_context "intercept/augment without ix text still names the definition" \
+  "is defined at src/auth.ts"
+assert_log_not_contains "intercept/augment logs no ix text command" "CMD ix text"
+assert_log_contains "intercept/augment logs ix locate" "CMD ix locate AuthService --format json"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/augment never runs ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/augment never runs ix text"
+fi
+
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_block_decision "intercept/block reason keeps the text-hit line" \
+  "4 text hits in auth.ts, auth.ts, auth.test.ts"
+if grep -qx 'text AuthService --limit 15 --format json --path src/' "${_ICPT_CALLS}"; then
+  pass "intercept/block runs ix text with the Grep's path"
+else
+  fail "intercept/block runs ix text with the Grep's path" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+fi
+
+# A locate that does not block must not pay for ix text either: a turned-down
+# resolutionMode (fuzzy) stays silent, and a preferred-kind one is injected but
+# never denied.
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_empty "intercept/fuzzy locate with blocking on stays silent"
+if ! grep -q '^locate ' "${_ICPT_CALLS}"; then
+  fail "intercept/fuzzy locate was asked" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+elif grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/no block, no ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/no block, no ix text"
+fi
+
+: > "${_ICPT_CALLS}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json" IX_MOCK_CALL_LOG="${_ICPT_CALLS}"
+assert_additional_context "intercept/preferred-kind with blocking on augments" "is defined at"
+if grep -q '^text ' "${_ICPT_CALLS}"; then
+  fail "intercept/preferred-kind augment runs no ix text" "calls: $(tr '\n' ';' < "${_ICPT_CALLS}")"
+else
+  pass "intercept/preferred-kind augment runs no ix text"
+fi
+
+# `ix locate` runs under the same bound as in ix-bash.sh: a hung locate costs
+# IX_LOCATE_TIMEOUT, not the whole hook timeout, and the Grep answers alone.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_LOCATE_SLEEP=5 IX_LOCATE_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_empty "intercept/hung ix locate stays silent"
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT"
+  else
+    fail "intercept/ix locate is bounded by IX_LOCATE_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+
+  # The block branch's `ix text` has its own short bound; an overrun only
+  # drops the text-hit line, the Grep is still denied with the definition.
+  _icpt_t0=$(date +%s)
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+    IX_MOCK_TEXT_SLEEP=5 IX_TEXT_TIMEOUT=1
+  _icpt_dt=$(( $(date +%s) - _icpt_t0 ))
+  assert_block_decision "intercept/hung ix text still blocks with the definition" \
+    "Found: AuthService (class) at src/auth.ts"
+  if printf '%s' "${_OUT}" | grep -q "text hits"; then
+    fail "intercept/hung ix text leaves out the text-hit line" "got: ${_OUT}"
+  else
+    pass "intercept/hung ix text leaves out the text-hit line"
+  fi
+  if [ "${_icpt_dt}" -lt 4 ]; then
+    pass "intercept/block ix text is bounded by IX_TEXT_TIMEOUT"
+  else
+    fail "intercept/block ix text is bounded by IX_TEXT_TIMEOUT" "hook took ${_icpt_dt}s"
+  fi
+fi
 
 # TODO marker → literal search, hook stays silent
 run_hook ix-intercept.sh "${_GREP_TODO_FIXTURE}"
@@ -1078,9 +1326,17 @@ assert_empty "intercept/grep TODO literal"
 run_hook ix-intercept.sh "${_GREP_PHRASE_FIXTURE}"
 assert_empty "intercept/grep phrase literal"
 
-# Dotted symbol → still treated as symbol lookup and blocks on exact match
+# Dotted symbol → still treated as symbol lookup and blocks on an exact match
+# of its last segment.
+_LOCATE_LOGIN_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.name = "login" | .resolvedTarget.kind = "method"' "${FX_IX}/locate_resolved.json" > "${_LOCATE_LOGIN_FIXTURE}"
+run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1 \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_LOGIN_FIXTURE}"
+assert_block_decision "intercept/grep dotted symbol blocks" "Found: login (method) at src/auth.ts"
+# An unlabelled target with some other name is not an exact match, whatever the
+# missing mode suggests: silent, never denied.
 run_hook ix-intercept.sh "${_GREP_DOTTED_SYMBOL_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
-assert_block_decision "intercept/grep dotted symbol blocks" "Found: AuthService (class) at src/auth.ts"
+assert_empty "intercept/unlabelled target named otherwise is never denied"
 
 # Regex pattern → literal search, hook stays silent
 run_hook ix-intercept.sh "${FX_IN}/grep_regex.json"
@@ -1164,10 +1420,72 @@ assert_empty "intercept/secret pattern suppressed"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_FAIL=1
 assert_empty "intercept/ix failure degrades gracefully"
 
-# Low-confidence locate → allow native Grep with no injection
+# A fuzzy resolution (a resolutionMode other than exact or preferred-kind) is not one
+# definition the hook can stand behind: native Grep runs, nothing is injected,
+# and the opt-in deny never fires on it.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "intercept/low confidence locate allows native Grep"
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "intercept/fuzzy locate allows native Grep"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy locate is never denied"
+# A looser scored pick is not one either.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/scored locate is never denied"
+# The Grep hook gates the locate output once and hands the result on: a
+# turned-down mode is logged once, and no `ix callers` runs for it.
+run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json"
+_got=$(grep -c "LOCATE target not used: resolutionMode=scored" "${_IX_DEBUG_LOG}" 2>/dev/null)
+if [ "$_got" = "1" ] && ! grep -q "CMD ix callers" "${_IX_DEBUG_LOG}"; then
+  pass "intercept/scored locate is gated once, without ix callers"
+else
+  fail "intercept/scored locate is gated once, without ix callers" "log: $(cat "${_IX_DEBUG_LOG}" 2>/dev/null)"
+fi
+# preferred-kind is one target the CLI resolved itself (an exact-name tie broken
+# by kind, or a near-exact score): injected, but never denied, because a
+# near-exact score is not the name the user typed.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"
+assert_additional_context "intercept/preferred-kind locate augments" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_additional_context "intercept/preferred-kind locate augments, not denied, when the deny is on" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
+# An explicit `exact` mode is denied like the missing mode (the default fixture).
+_LOCATE_EXACT_FIXTURE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '. + {resolutionMode: "exact"}' "${FX_IX}/locate_resolved.json" > "${_LOCATE_EXACT_FIXTURE}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_EXACT_FIXTURE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/exact-mode locate blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+# If the CLI never prints a mode, a fuzzy pick (a different name) is neither
+# injected nor denied; if it nests the mode in resolvedTarget, a nested fuzzy
+# mode is read as fuzzy and a nested exact one as exact.
+_LOCATE_FUZZY_UNLABELLED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq 'del(.resolutionMode)' "${FX_IX}/locate_fuzzy.json" > "${_LOCATE_FUZZY_UNLABELLED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_UNLABELLED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy pick without a resolutionMode is never denied"
+_LOCATE_FUZZY_NESTED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.name = "AuthService" | .resolvedTarget.resolutionMode = .resolutionMode | del(.resolutionMode)' \
+  "${FX_IX}/locate_fuzzy.json" > "${_LOCATE_FUZZY_NESTED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_NESTED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/fuzzy mode nested in resolvedTarget is never denied"
+_LOCATE_EXACT_NESTED=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+jq '.resolvedTarget.resolutionMode = "exact"' "${FX_IX}/locate_resolved.json" > "${_LOCATE_EXACT_NESTED}"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${_LOCATE_EXACT_NESTED}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_block_decision "intercept/exact mode nested in resolvedTarget blocks when asked to" "Next: ix read AuthService | ix explain AuthService"
+# Nor does an ambiguous match deny the Grep, in either release's shape.
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/ambiguous locate (0.12.1 shape) is never denied"
+run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous_target.json" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+assert_empty "intercept/ambiguous locate is never denied"
 
 # Escape hatch disables blocking even for exact high-confidence matches
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=0
@@ -1334,7 +1652,7 @@ section "ix-bash.sh"
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}"
 assert_additional_context "bash/grep intercepted"
 assert_additional_context "bash/grep answered with definition and callers" \
-  "[ix] \`AuthService\` (class) is defined at src/auth.ts; called from 4 places"
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 if printf '%s' "${_OUT}" | grep -qE "Prefer|text hits"; then
   fail "bash/no grep hits repeated back, no ix nudge" "got: ${_OUT}"
 else
@@ -1345,9 +1663,18 @@ fi
 run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
 assert_empty "bash/candidates without one definition stay silent"
 
-# A low-confidence resolution is not worth a line.
-run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "bash/low confidence stays silent"
+# A fuzzy resolution is not worth a line.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "bash/fuzzy resolution stays silent"
+# Nor is a fuzzy pick the CLI prints without a mode: its name is not the one
+# grepped for, so ix_locate_confident turns it down.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${_LOCATE_FUZZY_UNLABELLED}"
+assert_empty "bash/fuzzy pick without a resolutionMode stays silent"
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_scored.json"
+assert_empty "bash/scored resolution stays silent"
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_preferred_kind.json"
+assert_additional_context "bash/preferred-kind resolution answered with definition and callers" \
+  "[ix] \`AuthService\` (class) is defined at src/auth.ts:3-20; called from 4 places"
 
 # An alternation is a grep expression, not a symbol: nothing in the graph is
 # named `a|b`, so the two ix calls could only come back empty. It must be
@@ -2958,6 +3285,366 @@ elif ! [[ "${_line}" =~ ${_re} ]]; then
   fail "timing/no EPOCHREALTIME, BSD date" "line: ${_line}"
 else
   pass "timing/no EPOCHREALTIME, BSD date"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+section "bounded logs"
+# ════════════════════════════════════════════════════════════════════════════
+# ledger.jsonl and errors.jsonl live in the user's home, outside the plugin and
+# its state dir, and are appended to for as long as the plugin is installed.
+# Each must stay under its byte cap (plus one line), keep only whole JSON lines,
+# and keep the newest records. Small caps here; the default is 1 MiB.
+
+# _bounded_check <label> <file> <cap> <appended> <newest-jq-filter>
+_bounded_check() {
+  local _label="$1" _file="$2" _cap="$3" _appended="$4" _newest="$5" _size _lines
+  if [ ! -f "${_file}" ]; then
+    fail "${_label}: file written" "missing: ${_file}"; return
+  fi
+  _size=$(wc -c < "${_file}" | tr -d ' ')
+  _lines=$(wc -l < "${_file}" | tr -d ' ')
+  # Lines in these runs are well under 1 KiB: cap + 1 KiB bounds "cap plus one line".
+  if [ "${_size}" -le $(( _cap + 1024 )) ]; then
+    pass "${_label}: stays under its cap after ${_appended} appends"
+  else
+    fail "${_label}: stays under its cap after ${_appended} appends" "size ${_size} > ${_cap} + 1024"
+  fi
+  if [ "${_lines}" -lt "${_appended}" ] && [ "${_lines}" -gt 0 ]; then
+    pass "${_label}: trimmed, not emptied (${_lines} of ${_appended} lines kept)"
+  else
+    fail "${_label}: trimmed, not emptied" "${_lines} of ${_appended} lines kept"
+  fi
+  if jq -e . "${_file}" >/dev/null 2>&1 \
+     && [ "$(jq -c . "${_file}" | wc -l | tr -d ' ')" = "${_lines}" ]; then
+    pass "${_label}: every kept line is whole JSON"
+  else
+    fail "${_label}: every kept line is whole JSON" "$(head -c 200 "${_file}")"
+  fi
+  if [ "$(tail -n 1 "${_file}" | jq -r "${_newest}" 2>/dev/null)" = "${_appended}" ]; then
+    pass "${_label}: newest record kept"
+  else
+    fail "${_label}: newest record kept" "last line: $(tail -n 1 "${_file}" | head -c 200)"
+  fi
+}
+
+_bl_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_bl_tmp}/home" "${_bl_tmp}/tmp"
+# Ledger: 200 appends against a 4 KiB cap, then the Stop hook's reader still
+# finds this turn's records.
+_bl_turn=$(
+  HOME="${_bl_tmp}/home" TMPDIR="${_bl_tmp}/tmp" IX_LEDGER_MAX_BYTES=4096 \
+  INPUT='{"session_id":"bounded-ledger"}' bash -c '
+    source "$1/ix-errors.sh" 2>/dev/null || true
+    source "$1/ix-lib.sh"
+    source "$1/ix-ledger.sh"
+    ix_ledger_append UserPromptSubmit Briefing 10 "" 1 "" 0 "turn start"
+    i=1
+    while [ "$i" -le 199 ]; do
+      ix_ledger_append PreToolUse Grep "$i" "locate,callers" 0.9 "" 3 "$i"
+      i=$((i + 1))
+    done
+    ix_ledger_append PreToolUse Grep 201 "locate" 0.9 "" 3 "201"
+    ix_ledger_last_turn | jq -r "length" 2>/dev/null
+  ' _ "${HOOKS_DIR}" 2>/dev/null)
+_bounded_check "ledger.jsonl" "${_bl_tmp}/home/.local/share/ix/plugin/ledger/ledger.jsonl" \
+  4096 201 '.note'
+if [ -n "${_bl_turn}" ] && [ "${_bl_turn}" -gt 0 ] 2>/dev/null; then
+  pass "ledger.jsonl: the Stop hook still reads this session's records after a trim"
+else
+  fail "ledger.jsonl: the Stop hook still reads this session's records after a trim" "got '${_bl_turn}'"
+fi
+
+# Errors: 200 captures against a 4 KiB cap. ix_capture_async writes from a
+# disowned background subshell; `9>&1` inside $(...) waits for it (see
+# run_hook_with_error_ledger), so the appends happen one after another.
+HOME="${_bl_tmp}/home" TMPDIR="${_bl_tmp}/tmp" IX_ERROR_MAX_BYTES=4096 \
+IX_ERROR_MODE=local bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  i=1
+  while [ "$i" -le 200 ]; do
+    : "$(ix_capture_async ix ix-intercept "ix locate failed" "$i" "ix locate Foo" "backend unreachable" 9>&1)"
+    i=$((i + 1))
+  done
+' _ "${HOOKS_DIR}" >/dev/null 2>&1
+_bounded_check "errors.jsonl" "${_bl_tmp}/home/.local/share/ix/plugin/errors/errors.jsonl" \
+  4096 200 '.exit_code'
+
+# An unusable cap falls back to the default (1 MiB) instead of turning trimming
+# off or trimming everything: a small file is left exactly as it was.
+_bl_file="${_bl_tmp}/small.jsonl"
+printf '{"a":1}\n{"a":2}\n' > "${_bl_file}"
+_bl_out=$(TMPDIR="${_bl_tmp}/tmp" bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  for cap in "" 0 abc -5; do ix_trim_jsonl "$2" "$cap"; done
+  cat "$2"
+' _ "${HOOKS_DIR}" "${_bl_file}" 2>/dev/null)
+if [ "${_bl_out}" = $'{"a":1}\n{"a":2}' ]; then
+  pass "ix_trim_jsonl: an empty, zero or non-numeric cap means the default, not 'trim all'"
+else
+  fail "ix_trim_jsonl: an empty, zero or non-numeric cap means the default, not 'trim all'" "got: ${_bl_out}"
+fi
+
+# With no cap set, the default is 1 MiB: a 1.2 MB log comes back under it.
+_bl_big="${_bl_tmp}/big.jsonl"
+awk 'BEGIN { for (i = 1; i <= 12000; i++) printf "{\"n\":%d,\"pad\":\"%080d\"}\n", i, 0 }' > "${_bl_big}"
+TMPDIR="${_bl_tmp}/tmp" bash -c '
+  source "$1/ix-errors.sh" 2>/dev/null || true
+  source "$1/ix-lib.sh"
+  ix_trim_jsonl "$2"
+' _ "${HOOKS_DIR}" "${_bl_big}" 2>/dev/null
+_bl_size=$(wc -c < "${_bl_big}" | tr -d ' ')
+if [ "${_bl_size}" -le 1048576 ] && [ "${_bl_size}" -ge 400000 ] \
+   && [ "$(tail -n 1 "${_bl_big}" | jq -r .n 2>/dev/null)" = "12000" ]; then
+  pass "ix_trim_jsonl: default cap is 1 MiB (1.2 MB -> ${_bl_size} bytes, newest kept)"
+else
+  fail "ix_trim_jsonl: default cap is 1 MiB" "size ${_bl_size}, last: $(tail -n 1 "${_bl_big}")"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# A slow ix never outlasts a hook (#61)
+# ═════════════════════════════════════════════════════════════════════════════
+# When an ix call overran, Claude Code killed the hook at its hooks.json
+# timeout: the tool call or prompt waited the full 10 or 15 seconds and
+# whatever the hook had already found was lost. Every ix call goes through
+# ix_run_bounded, and the briefing hook shares one budget across its calls.
+section "slow ix: every hook exits before its timeout"
+
+# Static: no hook starts an ix lookup except through ix_run_bounded. Lines
+# continued with a backslash are joined first, so `ix_run_bounded N \` over
+# `ix status ...` reads as one command. Comment lines are skipped; `ix map` is
+# the detached refresh and is not a lookup.
+_unbounded=$(awk '{ if (buf == "") start = FNR
+                    if (sub(/\\$/, "")) { buf = buf $0 " "; next }
+                    print FILENAME ":" start ":" buf $0; buf = "" }' \
+    "${HOOKS_DIR}"/*.sh "${HOOKS_DIR}"/lib/*.sh 2>/dev/null \
+  | grep -E '(^[^:]+:[0-9]+:|\$\(|\||&&|;|\bthen|\belse|\bdo)[[:space:]]*(cd [^&]*&&[[:space:]]*)?ix (text|locate|impact|inventory|briefing|callers|context|status|hook|overview)\b' \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -n "${_unbounded}" ]; then
+  fail "slow/every ix lookup goes through ix_run_bounded" "$(printf '%s' "${_unbounded}" | tr '\n' ';')"
+else
+  pass "slow/every ix lookup goes through ix_run_bounded"
+fi
+
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  # The shared budget: a spent budget runs nothing, and a short one cuts a
+  # longer per-call bound down to what is left.
+  _bud_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
+  _OUT=$(env TMPDIR="${_bud_tmp}" IX_ERROR_MODE="off" IX_MOCK_CALL_LOG="${_bud_tmp}/calls" \
+    IX_MOCK_SLEEP=5 PATH="${TESTS_DIR}:${PATH}" \
+    bash -c '
+      source "$1/lib/index.sh"
+      ix_budget_start 0
+      _rc=0; ix_run_bounded 5 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s\n" "${_rc}"
+      ix_budget_start 1
+      _t0=$SECONDS
+      _rc=0; ix_run_bounded 10 ix text foo >/dev/null 2>&1 || _rc=$?
+      printf "%s %s\n" "${_rc}" "$(( SECONDS - _t0 ))"
+    ' _ "${HOOKS_DIR}" 2>/dev/null) || true
+  _bud_spent=$(printf '%s\n' "${_OUT}" | sed -n '1p')
+  _bud_short=$(printf '%s\n' "${_OUT}" | sed -n '2p')
+  _bud_calls=$(wc -l < "${_bud_tmp}/calls" 2>/dev/null | tr -d ' ' || echo 0)
+  if [ "${_bud_spent}" = "124" ] && [ "${_bud_calls:-0}" -le 1 ]; then
+    pass "slow/a spent budget runs no ix call"
+  else
+    fail "slow/a spent budget runs no ix call" "rc=${_bud_spent}, ix calls=${_bud_calls}"
+  fi
+  if [ "${_bud_short%% *}" = "124" ] && [ "${_bud_short##* }" -le 2 ]; then
+    pass "slow/the budget caps a longer per-call bound"
+  else
+    fail "slow/the budget caps a longer per-call bound" "expected '124 <=2', got '${_bud_short}'"
+  fi
+
+  # hooks.json timeout for a hook script.
+  _hook_timeout() {
+    jq -r --arg h "/hooks/$1" \
+      '[.hooks[][] | .hooks[] | select(.command | endswith($h)) | .timeout] | max' \
+      "${HOOKS_DIR}/hooks.json"
+  }
+
+  # Each case runs its hook against an ix that takes longer than any hook's
+  # timeout, all at once, so the section costs the slowest case and not the sum.
+  _slow_dir=$(mktemp -d -p "${TEST_TMPDIR}")
+  _slow_pids=()
+  _slow_names=()
+  # slow_case <name> <hook.sh> <input> [KEY=VAL ...]
+  slow_case() {
+    local _name="$1" _hook="$2" _input="$3"; shift 3
+    local _t="${_slow_dir}/${_name}"
+    mkdir -p "${_t}/tmp"
+    (
+      _s=$SECONDS
+      _rc=0
+      env TMPDIR="${_t}/tmp" IX_LEDGER_MODE="off" IX_INGEST_INJECT="off" IX_ERROR_MODE="off" \
+        IX_MOCK_SLEEP=20 IX_MOCK_CALL_LOG="${_t}/calls" "$@" PATH="${TESTS_DIR}:${PATH}" \
+        bash "${HOOKS_DIR}/${_hook}" < "${_input}" > "${_t}/out" 2>/dev/null || _rc=$?
+      printf '%s %s %s\n' "$(( SECONDS - _s ))" "${_rc}" "${_hook}" > "${_t}/result"
+    ) &
+    _slow_pids+=("$!")
+    _slow_names+=("${_name}")
+  }
+  # A state dir where the Pro probe has already answered "Pro" in this health
+  # window, so the hook goes straight to `ix briefing`.
+  _seed_pro() {
+    local _d="${_slow_dir}/$1/tmp/ix-plugin-cache-$(id -u)" _ts
+    mkdir -p "${_d}"; chmod 700 "${_d}"
+    _ts=$(date +%s)
+    echo "${_ts}" > "${_d}/healthy"; echo 1 > "${_d}/pro"; echo "${_ts}" > "${_d}/pro.ts"
+  }
+
+  _seed_pro briefing-pro-all-slow
+  _seed_pro briefing-pro-briefing-slow
+  _seed_pro briefing-small-budget
+  slow_case briefing-all-slow          ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-all-slow      ix-briefing.sh   "${_START_FIXTURE}"
+  slow_case briefing-pro-briefing-slow ix-briefing.sh   "${_START_FIXTURE}" IX_MOCK_SLEEP_ON="briefing"
+  slow_case briefing-small-budget      ix-briefing.sh   "${_START_FIXTURE}" IX_BRIEFING_BUDGET=3
+  slow_case grep-all-slow              ix-intercept.sh  "${FX_IN}/grep_plain.json"
+  slow_case grep-text-callers-slow     ix-intercept.sh  "${FX_IN}/grep_plain.json" IX_MOCK_SLEEP_ON="text callers"
+  slow_case glob-slow                  ix-intercept.sh  "${FX_IN}/glob_path.json"
+  slow_case bash-callers-slow          ix-bash.sh       "${_BASH_GREP_FIXTURE}" IX_MOCK_SLEEP_ON="callers"
+  slow_case pre-edit-slow              ix-pre-edit.sh   "${FX_IN}/edit_high_risk.json"
+  slow_case dependents-slow            ix-dependents.sh "${_DEP_BASH_FIXTURE}"
+  for _p in "${_slow_pids[@]}"; do wait "${_p}" 2>/dev/null || true; done
+
+  for _name in "${_slow_names[@]}"; do
+    read -r _el _rc _hk < "${_slow_dir}/${_name}/result" 2>/dev/null || { _el=99; _rc=?; _hk=?; }
+    _lim=$(_hook_timeout "${_hk}")
+    if [ "${_rc}" != "0" ]; then
+      fail "slow/${_name} exits 0" "rc=${_rc}"
+    elif [ "${_el}" -ge "${_lim:-0}" ]; then
+      fail "slow/${_name} finishes inside its ${_lim}s timeout" "took ${_el}s"
+    else
+      pass "slow/${_name} finishes inside its ${_lim}s timeout (${_el}s)"
+    fi
+  done
+
+  # What the hook found before the slow call is still delivered.
+  if grep -q "Starting points" "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null; then
+    pass "slow/a briefing that times out still delivers the starting points"
+  else
+    fail "slow/a briefing that times out still delivers the starting points" \
+      "got: $(head -c 160 "${_slow_dir}/briefing-pro-briefing-slow/out" 2>/dev/null)"
+  fi
+  # The start points spend the whole 3s budget, so `ix briefing` never runs.
+  if grep -q '^briefing' "${_slow_dir}/briefing-small-budget/calls" 2>/dev/null; then
+    fail "slow/a spent briefing budget skips ix briefing" "calls: $(tr '\n' ';' < "${_slow_dir}/briefing-small-budget/calls")"
+  else
+    pass "slow/a spent briefing budget skips ix briefing"
+  fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Repo docs: what ships with the plugin, and what it claims exists
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything in the repo root is installed with the plugin. The root keeps one
+# user document (README.md), one contributor document (CLAUDE.md) and the
+# changelog; a design note or task breakdown there ships to every user and
+# drifts from the hooks. And no current document may name an IX_* switch or a
+# hook script the code does not have. CHANGELOG.md is history: it may name
+# what was removed, and switches the Ix CLI itself reads.
+section "Repo docs"
+
+_REPO_DIR="$(cd "${TESTS_DIR}/.." && pwd)"
+
+# The docs the repo ships: in a git checkout, every *.md git knows about or
+# would add (tracked, plus untracked files .gitignore does not exclude), so a
+# contributor's ignored local notes (DESIGN.md, HANDOFF.md, ...) never fail
+# the suite; outside git, every *.md on disk. Prints repo-relative paths,
+# NUL-separated, skipping .git and paths deleted from the working tree.
+_list_md_files() {
+  local _dir="$1" _f
+  if git -C "${_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r -d '' _f; do
+      case "${_f}" in *.[mM][dD]) ;; *) continue ;; esac
+      [ -f "${_dir}/${_f}" ] && printf '%s\0' "${_f}"
+    done < <(git -C "${_dir}" ls-files -z --cached --others --exclude-standard)
+  else
+    (cd "${_dir}" && find . -path ./.git -prune -o -type f -iname '*.md' -print0) \
+      | while IFS= read -r -d '' _f; do printf '%s\0' "${_f#./}"; done
+  fi
+}
+
+_root_docs=$(_list_md_files "${_REPO_DIR}" | tr '\0' '\n' | grep -v / | LC_ALL=C sort -u | tr '\n' ' ')
+if [ "${_root_docs}" = "CHANGELOG.md CLAUDE.md README.md " ]; then
+  pass "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only"
+else
+  fail "docs/root holds README.md, CLAUDE.md and CHANGELOG.md only" "found: ${_root_docs}"
+fi
+
+# Current docs: every shipped *.md, minus the changelog.
+_doc_files=()
+while IFS= read -r -d '' _f; do
+  [ "${_f}" = "CHANGELOG.md" ] && continue
+  _doc_files+=("${_REPO_DIR}/${_f}")
+done < <(_list_md_files "${_REPO_DIR}")
+# Where a switch can really live: the hook code (tests/test_hooks.sh still
+# sets a few switches no hook reads any more, so it does not count), or, for
+# the IX_MOCK_* knobs, the ix stub.
+_code_files=()
+while IFS= read -r -d '' _f; do
+  _code_files+=("${_f}")
+done < <(find "${HOOKS_DIR}" -type f ! -name '*.md' -print0)
+
+_missing_vars=""
+for _v in $(grep -ohE '\bIX_[A-Z0-9_]+' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  case "${_v}" in
+    IX_MOCK_*) grep -qw -- "${_v}" "${TESTS_DIR}/mock-ix.sh" ;;
+    *) grep -qw -- "${_v}" "${_code_files[@]}" ;;
+  esac 2>/dev/null || _missing_vars="${_missing_vars} ${_v}"
+done
+if [ -z "${_missing_vars}" ]; then
+  pass "docs/every IX_* variable a doc names exists in the hooks"
+else
+  fail "docs/every IX_* variable a doc names exists in the hooks" "missing:${_missing_vars}"
+fi
+
+_missing_hooks=""
+for _h in $(grep -ohE '\bix-[a-z0-9-]+\.sh\b' "${_doc_files[@]}" 2>/dev/null | sort -u); do
+  [ -f "${_REPO_DIR}/hooks/${_h}" ] || [ -f "${_REPO_DIR}/tests/${_h}" ] \
+    || _missing_hooks="${_missing_hooks} ${_h}"
+done
+if [ -z "${_missing_hooks}" ]; then
+  pass "docs/every ix-*.sh a doc names exists"
+else
+  fail "docs/every ix-*.sh a doc names exists" "missing:${_missing_hooks}"
+fi
+
+# _list_md_files: ignored local notes are skipped in git, found outside it.
+_LMD=$(mktemp -d -p "${TEST_TMPDIR}")
+mkdir -p "${_LMD}/repo/docs" "${_LMD}/plain"
+(
+  cd "${_LMD}/repo" && git init -q . \
+    && printf 'DESIGN.md\n' > .gitignore \
+    && printf 'IX_SOMETHING_OLD\n' > DESIGN.md \
+    && : > README.md && : > docs/guide.md && : > NEW.md \
+    && git add README.md docs/guide.md .gitignore
+)
+_lmd_git=$(_list_md_files "${_LMD}/repo" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_git}" = "NEW.md README.md docs/guide.md " ]; then
+  pass "docs/doc listing skips gitignored notes, keeps tracked and new docs"
+else
+  fail "docs/doc listing skips gitignored notes, keeps tracked and new docs" "got: ${_lmd_git}"
+fi
+: > "${_LMD}/plain/README.md"; : > "${_LMD}/plain/DESIGN.md"
+_lmd_plain=$(_list_md_files "${_LMD}/plain" | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' ')
+if [ "${_lmd_plain}" = "DESIGN.md README.md " ]; then
+  pass "docs/doc listing falls back to every *.md outside git"
+else
+  fail "docs/doc listing falls back to every *.md outside git" "got: ${_lmd_plain}"
+fi
+
+# Every hook hooks.json registers is named in README.md's hook table.
+_unlisted=""
+for _h in $(jq -r '.. | .command? // empty' "${HOOKS_DIR}/hooks.json" | sed 's|.*/||' | sort -u); do
+  grep -q -- "\`${_h}\`" "${_REPO_DIR}/README.md" || _unlisted="${_unlisted} ${_h}"
+done
+if [ -z "${_unlisted}" ]; then
+  pass "docs/README.md names every hook hooks.json registers"
+else
+  fail "docs/README.md names every hook hooks.json registers" "unlisted:${_unlisted}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -1,8 +1,11 @@
 {
+  "resolvedTarget": null,
+  "resolutionMode": "ambiguous",
   "candidates": [
-    {"name": "AuthService",     "kind": "class"},
-    {"name": "AuthServiceV2",   "kind": "class"},
-    {"name": "AuthServiceMock", "kind": "class"}
+    {"name": "AuthService",     "kind": "class", "path": "src/auth.ts"},
+    {"name": "AuthServiceV2",   "kind": "class", "path": "src/auth-v2.ts"},
+    {"name": "AuthServiceMock", "kind": "class", "path": "test/auth-mock.ts"}
   ],
-  "confidence": 0.7
+  "systemPath": [],
+  "diagnostics": []
 }

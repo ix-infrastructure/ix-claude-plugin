@@ -22,15 +22,16 @@
 #   ix_log_injection        — log exact injected hook content with escaped newlines
 #   parse_json              — strip ix header noise, extract first JSON value
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
+#   ix_locate_confident     — did ix locate pick one definition itself (exact or preferred-kind)? sets LOC_MODE, LOC_EXACT
 #   ix_emit_context         — emit hookSpecificOutput.additionalContext for an event
 #   ix_hook_decide          — emit PreToolUse block/augment/allow output (legacy or structured block)
 #   ix_hook_fallback        — degrade block/augment decisions to augment/allow when empty
 #   ix_query_intent         — classify Grep patterns as symbol-like or literal
 #   ix_run_bounded          — run a command under a wall-clock bound where possible
+#   ix_budget_start         — give the rest of this hook a shared budget for ix_run_bounded
 #   ix_looks_like_secret    — returns 0 if pattern looks like a secret/token; 1 otherwise
-#   ix_run_text_locate      — run ix text + ix locate in parallel
 #   ix_summarize_text       — summarise text results → TEXT_PART
-#   ix_summarize_locate     — summarise locate results → LOC_PART
+#   ix_trim_jsonl           — keep an append-only JSONL log under a byte cap
 
 # ── Portable millisecond timestamp ───────────────────────────────────────────
 # Usage: ix_now_ms
@@ -173,12 +174,8 @@ ix_request_auto_map() {
   echo "$_now" > "$_stamp" 2>/dev/null || true
 
   ix_log_command ix status --format json --root "$_root"
-  if command -v timeout >/dev/null 2>&1; then
-    _status=$(cd "$_root" && timeout "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" \
-      ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  else
-    _status=$(cd "$_root" && ix status --format json --root "$_root" 2>/dev/null) || _status=""
-  fi
+  _status=$(cd "$_root" && ix_run_bounded "${IX_AUTO_MAP_STATUS_TIMEOUT:-10}" ix status --format json --root "$_root" 2>/dev/null) \
+    || _status=""
   if ! printf '%s' "$(parse_json "$_status")" | jq -e '.graphCompleted == true' >/dev/null 2>&1; then
     ix_log "AUTOMAP skip: $_root is not mapped (or ix status failed)"
     return 0
@@ -286,6 +283,34 @@ hash_string() {
   fi
 }
 
+# ── Bounded JSONL logs ────────────────────────────────────────────────────────
+# Usage: ix_trim_jsonl <file> [max_bytes]
+# The ledger and the error log are appended to for as long as the plugin is
+# installed. Call this after an append: once <file> is larger than max_bytes
+# (default 1 MiB; an empty, zero or non-numeric value means the default), it
+# keeps the newest whole lines that fit in half of max_bytes. The file then
+# stays under max_bytes plus one line, and the next trim is another half of
+# max_bytes of appends away. Each call costs one `wc -c`; the rewrite is rare.
+# Rewrites through a temp file and `mv`, so a reader never sees a cut line; a
+# line appended by another hook during the rewrite can be lost.
+ix_trim_jsonl() {
+  local _f="${1:-}" _max="${2:-}" _size _tmp
+  case "$_max" in ''|*[!0-9]*) _max=1048576 ;; esac
+  [ "$_max" -gt 0 ] 2>/dev/null || _max=1048576
+  [ -f "$_f" ] && [ ! -L "$_f" ] || return 0
+  _size=$(wc -c < "$_f" 2>/dev/null) || return 0
+  _size="${_size//[!0-9]/}"
+  [ "${_size:-0}" -gt "$_max" ] 2>/dev/null || return 0
+  _tmp=$(mktemp "${_f}.XXXXXX" 2>/dev/null) || return 0
+  # The byte cut lands inside a line: drop that first, partial line.
+  if tail -c "$(( _max / 2 ))" "$_f" 2>/dev/null | sed '1d' > "$_tmp" 2>/dev/null \
+     && mv -f "$_tmp" "$_f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$_tmp" 2>/dev/null
+  return 0
+}
+
 # ── Health check (no ix status — commands fail fast on their own) ─────────────
 # Keeps a 300s TTL cache so ix_check_pro can schedule re-checks without
 # calling ix status (which takes 6s+ and would reliably timeout 10s hooks).
@@ -316,8 +341,26 @@ ix_health_check() {
 # under `set -euo pipefail`, an unbounded run is the fallback — the callers that
 # matter also cache their result before running, so an overrun costs one hook
 # invocation rather than every one after it.
+#
+# Under a budget (ix_budget_start), the bound is also cut to what is left of
+# it, and a spent budget runs nothing: it returns 124, the exit code of a
+# command `timeout` cut short, so callers handle it as they handle a timeout.
+# Cleared on load: a budget belongs to the hook that set it, never inherited.
+_IX_DEADLINE=""
 ix_run_bounded() {
-  local _secs="$1"; shift
+  local _secs="$1" _left; shift
+  if [[ "${_IX_DEADLINE:-}" =~ ^[0-9]+$ ]]; then
+    _left=$(( _IX_DEADLINE - $(date +%s) ))
+    if [ "$_left" -le 0 ]; then
+      ix_log "SKIP $* (hook budget spent)"
+      return 124
+    fi
+    # A non-integer per-call bound ("2.5") cannot be compared here; the
+    # budget's remainder bounds it instead.
+    if ! [[ "$_secs" =~ ^[0-9]+$ ]] || [ "$_secs" -eq 0 ] || [ "$_secs" -gt "$_left" ]; then
+      _secs="$_left"
+    fi
+  fi
   if command -v timeout >/dev/null 2>&1; then
     timeout "$_secs" "$@"
     return $?
@@ -327,6 +370,17 @@ ix_run_bounded() {
     return $?
   fi
   "$@"
+}
+
+# Usage: ix_budget_start <seconds>
+# Every ix_run_bounded after this, in this shell and its subshells, ends within
+# <seconds> of now: a hook that makes several ix calls in a row sets this below
+# its hooks.json timeout, so the sum of its calls cannot outlast the hook.
+# Whole seconds (`date +%s`), so a call can end up to a second past it.
+ix_budget_start() {
+  local _secs="${1:-0}"
+  [[ "$_secs" =~ ^[0-9]+$ ]] || _secs=0
+  _IX_DEADLINE=$(( $(date +%s) + _secs ))
 }
 
 # ── Pro check (TTL tied to health check) ─────────────────────────────────────
@@ -433,77 +487,6 @@ parse_json() {
   echo "$1" | awk '/^\[|^\{/{found=1} found{print}' | jq -c . 2>/dev/null || echo ""
 }
 
-# ── Run ix text + ix locate in parallel ──────────────────────────────────────
-# Usage: ix_run_text_locate PATTERN [PATH_ARG] [LANG_ARG]
-# Sets globals: _TEXT_RAW _LOC_RAW
-# Requires: ix_capture_async (from ix-errors.sh, no-op if absent)
-ix_run_text_locate() {
-  local _pattern="$1" _path_arg="${2:-}" _lang_arg="${3:-}"
-  local _text_tmp _loc_tmp _text_err _loc_err _TEXT_PID _LOC_PID _is_plain _loc_status
-  local _TEXT_ARGS=("$_pattern" "--limit" "15" "--format" "json")
-  [ -n "$_path_arg" ] && _TEXT_ARGS+=("--path" "$_path_arg")
-  [ -n "$_lang_arg" ] && _TEXT_ARGS+=("--language" "$_lang_arg")
-
-  _text_tmp=$(mktemp); _loc_tmp=$(mktemp)
-  _text_err=$(mktemp); _loc_err=$(mktemp)
-
-  ix_log_command ix text "${_TEXT_ARGS[@]}"
-  ix text "${_TEXT_ARGS[@]}" > "$_text_tmp" 2>"$_text_err" &
-  _TEXT_PID=$!
-
-  _is_plain=1
-  # Length guard: patterns shorter than 2 chars are too ambiguous for locate
-  [ "${#_pattern}" -lt 2 ] && _is_plain=0
-  # Block locate only for patterns that look like actual regex metacharacters:
-  #   quantifiers: * + ?
-  #   character classes: [ ]
-  #   groups: ( )
-  #   escape sequences: \d \w \s etc. (\\ followed by a word char)
-  #   quantifier braces with digit/comma: {N} or {N,M}
-  # Allowed: . _ - / : (all valid in qualified symbol names like module.method or config.ts)
-  if [ "$_is_plain" -eq 1 ] && \
-     printf '%s\n' "$_pattern" | grep -qE '[*+?]|[][()]|\\\w|\{[0-9]'; then
-    _is_plain=0
-  fi
-  _LOC_PID=""
-  if [ "$_is_plain" -eq 1 ]; then
-    ix_log_command ix locate "$_pattern" --format json
-    ix locate "$_pattern" --format json > "$_loc_tmp" 2>"$_loc_err" &
-    _LOC_PID=$!
-  else
-    ix_log "SKIP ix locate pattern treated as non-plain"
-  fi
-
-  wait "$_TEXT_PID" || ix_capture_async "ix" "ix-text" "text search failed" "$?" \
-    "ix text '${_pattern}'" "$(head -3 "$_text_err")"
-  [ -n "$_LOC_PID" ] && {
-    # `_loc_status=0; wait || _loc_status=$?` rather than a bare `wait`: these
-    # hooks run under `set -euo pipefail`, so an unguarded non-zero `wait` kills
-    # the hook outright. The `||` also keeps $? intact, which `if ! wait` would
-    # have replaced with the negation's own result.
-    _loc_status=0
-    wait "$_LOC_PID" || _loc_status=$?
-    if [ "$_loc_status" -ne 0 ]; then
-      # An unresolved target exits non-zero but still prints its JSON body
-      # (Ix#539). That is an answer, not a failure -- filing it would record an
-      # error for every symbol a user asks about that does not happen to exist,
-      # and bury real locate failures in the ledger. Only an empty body is a
-      # genuine failure.
-      if [ -s "$_loc_tmp" ]; then
-        ix_log "MISS ix locate exited ${_loc_status} with a body; treated as no-match"
-      else
-        ix_capture_async "ix" "ix-locate" "locate failed" "$_loc_status" \
-          "ix locate '${_pattern}'" "$(head -3 "$_loc_err")"
-      fi
-    fi
-  }
-
-  _TEXT_RAW=$(cat "$_text_tmp")
-  _LOC_RAW=$(cat "$_loc_tmp" 2>/dev/null || echo "")
-
-  rm -f "$_text_tmp" "$_loc_tmp" "$_text_err" "$_loc_err"
-}
-
 # ── Summarise ix text results ─────────────────────────────────────────────────
 # Usage: ix_summarize_text RAW_OUTPUT
 # Sets global: TEXT_PART (empty string if no results)
@@ -540,6 +523,76 @@ ix_confidence_gate() {
     CONF_GATE="warn"
     CONF_WARN="⚠ Graph confidence low (${_c}) — treat structural data as approximate"
   fi
+}
+
+# ── Did ix locate resolve one definition? ────────────────────────────────────
+# Usage: ix_locate_confident LOCATE_JSON [QUERY]
+# Returns 0 when `ix locate --format json` resolved one definition the hooks can
+# stand behind: a resolvedTarget with a name and a path, no error `code`, and a
+# resolutionMode that names a definition the CLI picked itself. Sets globals:
+#   LOC_MODE   the resolutionMode printed ("" when there is none)
+#   LOC_EXACT  1 when the target is an exact name match the hooks checked
+#              themselves (see below), else 0; the opt-in deny keys on this
+#
+# `ix locate` prints no confidence score, so the hooks used to read a
+# `confidence` that was never there, default it to 1 and pass every resolution.
+# resolutionMode is the signal the CLI does print. The values below are those
+# the test fixtures record for Ix CLI 0.12.1 (exact, preferred-kind, scored,
+# ambiguous, heuristic, none; later releases add fuzzy). No test runs a
+# resolving `ix locate` against a real CLI (tests/test_real_ix.sh has no
+# backend), so neither the list nor where the key sits is verified there. The
+# fixtures print it at the top level; `ix callers` prints it inside
+# resolvedTarget, so locate may too, and the top level is read first, then
+# resolvedTarget. They are read as:
+#   exact           an exact name match
+#   preferred-kind  one target, an exact-name tie broken by kind or a near-exact score
+#   (no key)        the fixtures omit the mode on an exact match. Not taken on
+#                   trust: it passes only when the target's name is QUERY (or
+#                   QUERY's last `.`/`::`/`#`/`/` segment), so a CLI that never
+#                   prints a mode cannot pass a fuzzy pick as exact
+#   anything else   a looser score, a heuristic or fuzzy pick, an ambiguous
+#                   name, a miss, or a mode added later
+# Only the first three count, so the hooks stay silent rather than inject on a
+# guess. LOC_EXACT, for the IX_BLOCK_ON_HIGH_CONFIDENCE=1 deny in
+# ix-intercept.sh, is narrower: a mode of exact or none, AND the name check
+# above, whatever the mode says. An ambiguous name never passes: it carries
+# resolutionMode "ambiguous" (and, in later releases, an error `code`). If the
+# CLI labels an ordinary match some other way, the hooks go quiet (fail safe:
+# no false deny, the native search still runs) and the turned-down mode is
+# written to IX_DEBUG_LOG.
+ix_locate_confident() {
+  local _ok _res _rest
+  # One jq pass for the verdict, the name check and the mode: the Grep hook
+  # waits on this.
+  _res=$(printf '%s' "$1" | jq -r --arg q "${2:-}" '
+    (.resolutionMode // (if (.resolvedTarget | type) == "object" then .resolvedTarget.resolutionMode else null end)) as $mode
+    | (($mode // "") | tostring | gsub("[\u001f\n]"; " ")) as $printed
+    | ((.resolvedTarget.name // "") | tostring) as $n
+    | ($q != "" and $n != "" and ($n == $q or $n == ($q | sub("^.*(\\.|::|#|/)"; ""))))  as $named
+    | (if (.code // null) != null then "no"
+       elif ($n == "") or ((.resolvedTarget.path // "") == "") then "no"
+       elif $mode == null then (if $named then "yes" else "unnamed" end)
+       elif ($mode == "exact" or $mode == "preferred-kind") then "yes"
+       else "mode" end)
+    + "\u001f" + (if $named and ($mode == null or $mode == "exact") then "1" else "0" end)
+    + "\u001f" + $printed' 2>/dev/null) || _res=""
+  _ok="${_res%%$'\x1f'*}"
+  LOC_MODE=""
+  LOC_EXACT=0
+  if [ "$_res" != "$_ok" ]; then
+    _rest="${_res#*$'\x1f'}"
+    LOC_EXACT="${_rest%%$'\x1f'*}"
+    [ "$_rest" != "$LOC_EXACT" ] && LOC_MODE="${_rest#*$'\x1f'}"
+    [ "$LOC_EXACT" = "1" ] || LOC_EXACT=0
+  fi
+  [ -n "$_ok" ] || _ok="no"
+  # A named target turned down only for its mode, or for an unlabelled match
+  # whose name is not the one searched for, is logged, so a release that labels
+  # an ordinary exact match differently shows up in IX_DEBUG_LOG instead of
+  # silencing the hints unnoticed.
+  [ "$_ok" = "mode" ] && ix_log "LOCATE target not used: resolutionMode=${LOC_MODE}"
+  [ "$_ok" = "unnamed" ] && ix_log "LOCATE target not used: no resolutionMode and name is not '${2:-}'"
+  [ "$_ok" = "yes" ]
 }
 
 # ── Hook output: model context ───────────────────────────────────────────────
@@ -705,10 +758,12 @@ ix_log() {
 }
 
 # ── What grep cannot say about a name ────────────────────────────────────────
-# Usage: ix_definition_context LOCATE_RAW
-# Sets global: DEF_PART — empty unless locate resolved one definition with
-# confidence >= 0.6. Then: where it is defined, and who calls it, at the call
-# site, nearest the definition's file first:
+# Usage: ix_definition_context LOCATE_RAW [LOCATE_JSON] [QUERY]
+# QUERY is the name searched for; ix_locate_confident checks an unlabelled
+# resolution against it.
+# Sets global: DEF_PART — empty unless locate resolved one definition by an
+# exact or preferred-kind match (ix_locate_confident). Then: where it is defined,
+# and who calls it, at the call site, nearest the definition's file first:
 #   [ix] `beta` (function) is defined at src/lib.js:5-7; called from 2 places:
 #   src/app.js:4 `return beta(1);` · src/report.js:5 `return …`
 #
@@ -721,19 +776,25 @@ ix_log() {
 # calls, is the part only the graph knows. `ix callers` runs bounded (IX_CALLERS_TIMEOUT, default 4s); a failure
 # or timeout leaves the definition on its own.
 ix_definition_context() {
-  local _raw="$1" _json _name _kind _path _conf _start _end _where _cal_raw _cal_json _total _sites _more _dir
+  local _raw="$1" _json _fields _name _kind _path _start _end _where _cal_raw _cal_json _total _sites _more _dir
   DEF_PART=""
-  _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
-  _name=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
-  _path=$(echo "$_json" | jq -r '.resolvedTarget.path // empty' 2>/dev/null || echo "")
+  # A caller that has already parsed the output and passed it through
+  # ix_locate_confident (ix-intercept.sh) hands that JSON over as $2, so the
+  # gate's jq work and its debug-log line are not repeated.
+  if [ -n "${2:-}" ]; then
+    _json="$2"
+  else
+    _json=$(parse_json "$_raw")
+    [ -z "$_json" ] && return 0
+    ix_locate_confident "$_json" "${3:-}" || return 0
+  fi
+  _fields=$(printf '%s' "$_json" | jq -r '
+    [ (.resolvedTarget.name // ""), (.resolvedTarget.path // ""),
+      (.resolvedTarget.kind // "symbol"), (.lineRange.start // ""), (.lineRange.end // "") ]
+    | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' 2>/dev/null) || _fields=""
+  [ -z "$_fields" ] && return 0
+  IFS=$'\x1f' read -r _name _path _kind _start _end <<< "$_fields" || true
   [ -z "$_name" ] || [ -z "$_path" ] && return 0
-  _conf=$(echo "$_json" | jq -r '(.confidence // .resolvedTarget.confidence // 1) | tostring' 2>/dev/null || echo "1")
-  ix_confidence_gate "${_conf:-1}"
-  [ "$CONF_GATE" = "ok" ] || return 0
-  _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // .resolvedTarget.type // "symbol"' 2>/dev/null || echo "symbol")
-  _start=$(echo "$_json" | jq -r '.lineRange.start // empty' 2>/dev/null || echo "")
-  _end=$(echo "$_json" | jq -r '.lineRange.end // empty' 2>/dev/null || echo "")
   _where="$_path"
   if [ -n "$_start" ]; then
     _where="${_where}:${_start}"
@@ -765,22 +826,3 @@ ix_definition_context() {
   return 0
 }
 
-# ── Summarise ix locate results ───────────────────────────────────────────────
-# Usage: ix_summarize_locate RAW_OUTPUT
-# Sets global: LOC_PART (empty string if no results)
-ix_summarize_locate() {
-  local _raw="$1" _json _resolved _kind _file _cands
-  LOC_PART=""
-  _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
-  _resolved=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
-  if [ -n "$_resolved" ]; then
-    _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // ""' 2>/dev/null || echo "")
-    _file=$(echo "$_json" | jq -r '(.resolvedTarget.path // "") | split("/")[-1]' 2>/dev/null || echo "")
-    LOC_PART="symbol: ${_resolved} (${_kind}${_file:+, $_file})"
-  else
-    _cands=$(echo "$_json" | jq -r '.candidates[:3] | map(.name + " (" + .kind + ")") | join(", ")' 2>/dev/null || echo "")
-    [ -n "$_cands" ] && LOC_PART="candidates: ${_cands}"
-  fi
-  return 0
-}

@@ -1,0 +1,14 @@
+{
+  "resolvedTarget": {
+    "id": "4d8e1b62-7f3a-4c95-b0e2-9a6c3d5f1e78",
+    "kind": "class",
+    "name": "AuthServiceFactory",
+    "path": "src/auth-factory.ts"
+  },
+  "resolutionMode": "scored",
+  "lineRange": {"start": 1, "end": 25},
+  "container": null,
+  "systemPath": [],
+  "diagnostics": [],
+  "hasMapData": true
+}
