@@ -769,10 +769,9 @@ ix_log() {
 #
 # A grep the model is about to run already lists every line that mentions the
 # name, so repeating those hits back (what the Bash and Grep hooks used to do)
-# told it nothing, and "prefer ix text over grep" was not followed: in a
-# SWE-PolyBench smoke of the plugin (3 issues, Claude Code 2.1.290) the hint
-# fired twice and no agent ran ix, and with Ix's tools on offer as MCP no agent
-# called one in 90 runs. Which line is the definition, and which mentions are
+# told it nothing, and "prefer ix text over grep" was not followed: agents
+# shown the hint did not run ix, and did not call Ix's tools on their own when
+# they were on offer as MCP. Which line is the definition, and which mentions are
 # calls, is the part only the graph knows. `ix callers` runs bounded (IX_CALLERS_TIMEOUT, default 4s); a failure
 # or timeout leaves the definition on its own.
 ix_definition_context() {
