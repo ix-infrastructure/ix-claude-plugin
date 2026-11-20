@@ -12,7 +12,9 @@
 #   ~/.local/share/ix/plugin/ledger/ledger.jsonl
 #
 # Config (env-overridable):
-#   IX_LEDGER_MODE   off | on  (default: on)
+#   IX_LEDGER_MODE       off | on  (default: on)
+#   IX_LEDGER_MAX_BYTES  size cap; past it the oldest lines go (default: 1048576,
+#                        see ix_trim_jsonl in ix-lib.sh)
 
 IX_LEDGER_STORE="${HOME}/.local/share/ix/plugin/ledger"
 IX_LEDGER_FILE="${IX_LEDGER_STORE}/ledger.jsonl"
@@ -75,6 +77,7 @@ ix_ledger_append() {
       ctx_chars:$chars, ix_cmds:($cmds|split(",")|map(select(length>0))),
       conf:$conf, risk:$risk, note:$note, ms:$ms}' \
     >> "$IX_LEDGER_FILE" 2>/dev/null || true
+  ix_trim_jsonl "$IX_LEDGER_FILE" "${IX_LEDGER_MAX_BYTES:-}" 2>/dev/null || true
 }
 
 # ── Public: return JSON array of current turn's ledger records ────────────────

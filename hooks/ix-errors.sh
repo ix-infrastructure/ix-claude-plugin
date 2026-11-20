@@ -13,6 +13,8 @@
 #
 # Config (env-overridable):
 #   IX_ERROR_MODE        off | local  (default: local)
+#   IX_ERROR_MAX_BYTES   size cap of errors.jsonl; past it the oldest lines go
+#                        (default: 1048576, see ix_trim_jsonl in ix-lib.sh)
 
 IX_ERROR_MODE="${IX_ERROR_MODE:-local}"
 IX_ERROR_STORE="${HOME}/.local/share/ix/plugin/errors"
@@ -57,6 +59,7 @@ _ixe_store_local() {
     --arg cmd "$4"    --arg ec "$5"     --arg stderr "$6" \
     '{ts:$ts,fp:$fp,type:$type,component:$comp,message:$msg,command:$cmd,exit_code:$ec,stderr:$stderr}' \
     >> "${IX_ERROR_STORE}/errors.jsonl" 2>/dev/null
+  ix_trim_jsonl "${IX_ERROR_STORE}/errors.jsonl" "${IX_ERROR_MAX_BYTES:-}" 2>/dev/null
 }
 
 # ── Pro feature detection ─────────────────────────────────────────────────────

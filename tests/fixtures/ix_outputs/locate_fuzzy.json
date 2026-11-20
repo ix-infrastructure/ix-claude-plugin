@@ -1,0 +1,14 @@
+{
+  "resolvedTarget": {
+    "id": "9b2e4f70-1c3a-4d58-8e6b-2a7c5d9f0e14",
+    "kind": "class",
+    "name": "AuthServiceImpl",
+    "path": "src/auth-impl.ts"
+  },
+  "resolutionMode": "fuzzy",
+  "lineRange": {"start": 1, "end": 40},
+  "container": null,
+  "systemPath": [],
+  "diagnostics": [],
+  "hasMapData": true
+}
