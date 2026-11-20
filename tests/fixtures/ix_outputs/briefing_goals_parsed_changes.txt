@@ -1,0 +1,15 @@
+Ix Briefing
+  Revision: 2742
+  Last ingest: 2026-09-19T05:16:26.352Z
+  ⚠ Graph is stale (last ingest 3 days ago)
+
+Goals (1)
+  ◆ Mock goal
+
+Recent Changes (3)
+  rev 2742 Parsed src/auth.ts
+  rev 2741 Parsed src/auth-routes.ts
+  rev 2740 Parsed src/app.ts
+
+Recent Decisions (1)
+  ◇ Mock decision

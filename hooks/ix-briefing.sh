@@ -97,6 +97,7 @@ IX_HOOK_NAME="ix-briefing"
 _t0=""
 ix_log "ENTRY mode=${_mode:-off} channel=${_channel:-?} fresh=${_briefing_fresh}"
 BRIEFING=""
+_pro_quiet=0
 if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   ix_log "RUN ix briefing (stale, Pro available)"
   ix_log_command ix briefing --format text
@@ -120,13 +121,44 @@ if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   }
   rm -f "$_bfr_err"
 
-  # Say nothing rather than say nothing at length. A briefing whose every
-  # section is empty is a header and a revision number — it tells the model
-  # only that Pro is installed, which costs a paragraph to convey.
+  # Say nothing rather than say nothing at length. A briefing with no goals,
+  # plans, decisions or bugs is a header, often a "Graph is stale" line, and at
+  # most a Recent Changes list -- usually `rev N Parsed <file>` rows. That names
+  # no command, gives no guidance and tells the model not to trust the graph,
+  # so Recent Changes alone does not count as something to say.
   if [ -n "$BRIEFING" ] && ! printf '%s' "$BRIEFING" \
-      | grep -qE '^(Goals|Plans|Recent Decisions|Open Bugs|Recent Changes) \([1-9]'; then
-    ix_log "SKIP briefing (no goals, plans, decisions, bugs or changes)"
+      | grep -qE '^(Goals|Plans|Recent Decisions|Open Bugs) \([1-9]'; then
+    ix_log "SKIP briefing (no goals, plans, decisions or bugs)"
     BRIEFING=""
+  fi
+
+  # In a briefing that is kept, a Recent Changes section made only of parse
+  # events (`rev N Parsed <file>`) goes too; one row that is anything else is a
+  # real change, and the section stays verbatim. A section runs from its
+  # heading to the next blank line or unindented line; the blank line ending
+  # it goes with it. Before the cap, so the cap measures what is sent. POSIX
+  # awk classes only: the hooks run on macOS with BSD awk.
+  if [ -n "$BRIEFING" ] && _filtered=$(printf '%s\n' "$BRIEFING" | awk '
+      function flush() {
+        kept = (other || rows == 0)
+        if (kept) printf "%s", buf
+        in_rc = 0; rows = 0; other = 0; buf = ""
+      }
+      in_rc && /^[[:space:]]*$/ { flush(); if (kept) print; next }
+      in_rc && /^[^[:space:]]/  { flush() }
+      in_rc {
+        buf = buf $0 "\n"; rows++
+        if ($0 !~ /^[[:space:]]*rev [^[:space:]]+ Parsed /) other = 1
+        next
+      }
+      /^Recent Changes \([0-9]/ { in_rc = 1; buf = $0 "\n"; rows = 0; other = 0; next }
+      { print }
+      END { if (in_rc) flush() }
+    '); then
+    if [ "${#_filtered}" -ne "${#BRIEFING}" ]; then
+      ix_log "DROP briefing Recent Changes (parse events only)"
+    fi
+    BRIEFING="$_filtered"
   fi
 
   # A project with a long plan list can run away with the prompt. 2 KB, not the
@@ -153,6 +185,15 @@ if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
     else
       echo "$_now" > "$IX_BRIEFING_CACHE"
     fi
+  fi
+  # Pro answered but had nothing worth saying (every group empty, or only parse
+  # events). Skills take an `[ix] Session briefing` as their sign that Pro is
+  # there (skills/shared.md); with none, a new Pro project would lose the
+  # `ix bug create` / `ix plan create` steps it needs to record its first bug
+  # or plan. So one line says Pro is there and nothing is on record.
+  if [ "$_fetched_ok" -eq 1 ] && [ -z "$BRIEFING" ]; then
+    _pro_quiet=1
+    ix_log "BRIEFING pro-only marker (nothing on record)"
   fi
   ix_log "BRIEFING result=${#BRIEFING} chars"
 elif [ "$_briefing_fresh" -eq 1 ]; then
@@ -187,6 +228,13 @@ if [ -n "$BRIEFING" ]; then
   fi
   ix_ledger_append "UserPromptSubmit" "Briefing" "${#_context}" "briefing" "1" "" "$_elapsed_ms" \
     "loaded project context up front from goals, plans, and recent decisions."
+elif [ "$_pro_quiet" -eq 1 ]; then
+  _briefing_block="[ix] Session briefing: Ix Pro is available; no goals, plans, decisions or open bugs are on record."
+  if [ -n "$_context" ]; then
+    _context="${_context}"$'\n'"${_briefing_block}"
+  else
+    _context="${_briefing_block}"
+  fi
 fi
 [ -n "$_annotation_instruction" ] && {
   if [ -n "$_context" ]; then
