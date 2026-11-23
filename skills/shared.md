@@ -40,7 +40,7 @@ Required flags:
 - Pass `--format llm` for token-optimized output you read directly (compact
   `key=value` records, typically 2-4x smaller than json). Use `--format json`
   only when you need to machine-parse the result (e.g. extract a field with a
-  tool). On **Pro** commands (`briefing`, `bug`, `decisions`, `plans`, `goal`, …)
+  tool). On **Pro** commands (`briefing`, `bug`, `decisions`, `plan`, `goal`, …)
   use `--format text`: Pro declares only `text|json`, so `llm` there silently
   renders text anyway, and json is the expensive one.
 
@@ -61,17 +61,14 @@ when it did not.
 | Tier | Commands |
 |---|---|
 | **Standard** | `subsystems`, `overview`, `locate`, `search`, `explain`, `read`, `trace`, `callers`, `callees`, `contains`, `depends`, `impact`, `inventory`, `text`, `smells`, `rank`, `stats`, `status`, `map`, `history`, `diff`, `imports`, `imported-by`, `patches`, `context`, `savings`, `doctor` |
-| **Pro only** | `briefing`, `bug`, `decide`, `decisions`, `goal`, `plan`, `plans`, `task`, `tasks`, `truth`, `workflow` |
+| **Pro only** | `briefing`, `bug`, `decide`, `decisions`, `goal`, `plan`, `task`, `tasks`, `truth`, `workflow` |
 
-The Pro row is `PRO_COMMANDS` in the CLI's `register/oss.ts` **minus `goals`**,
-which is listed there but implemented nowhere: Ix-pro#103 removed the duplicate
-top-level `goals` command, and `Ix-pro@main` registers `goal` and not `goals`.
-The OSS stub list was never updated, so `ix goals` on an OSS install answers
-"requires Ix Pro" for a command Pro does not have either. Use `ix goal list`
-(#31 fixes the two skills that called it).
+The Pro row is `PRO_COMMANDS` in the CLI's `register/pro-surface.ts`. Three
+plural names were retired and are in `PRO_RETIRED` there, each collapsed into a
+`list` subcommand: `goals` into `ix goal list` (Ix-pro#103), `bugs` into
+`ix bug list` (Ix-pro#108), and `plans` into `ix plan list` (Ix-pro#125).
 
-Three other retired names are deliberately absent: `bugs` was collapsed into
-`ix bug list` (Ix-pro#108), `instance` no longer exists at all, and `connect`
+Two other names are deliberately absent: `instance` no longer exists at all, and `connect`
 is a Pro-only *integrations* command (it opens a browser deep link to link a
 third-party account) — not a way to reach a local backend, which is `ix docker
 start`.

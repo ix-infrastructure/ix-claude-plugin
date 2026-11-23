@@ -86,7 +86,7 @@ If Pro is available (detected above):
 
 Check for existing plans and goals that overlap with this change:
 ```bash
-ix plans --format text
+ix plan list --format text
 ix goal list --format text
 ```
 
