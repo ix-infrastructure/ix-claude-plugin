@@ -713,19 +713,18 @@ else
 fi
 
 # A briefing whose every section is empty is a header and a revision number. It
-# tells the model only that Pro is installed, so that is all that is sent: one
-# line, which is what skills read as "Pro is available" (skills/shared.md).
-_BFR_PRO_ONLY="[ix] Session briefing: Ix Pro is available; no goals, plans, decisions or open bugs are on record."
+# tells the model nothing it can act on, so nothing is sent: no "Pro is
+# available" line either (skills/shared.md reads no briefing as nothing on record).
 _BFR_EMPTY=$(mktemp -d -p "${TEST_TMPDIR}")
 run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
   IX_ANNOTATE_MODE="off" \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt" \
   TMPDIR="${_BFR_EMPTY}"
 _ctx=$(echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
-if [ "${_ctx}" = "${_BFR_PRO_ONLY}" ]; then
-  pass "briefing/an empty briefing says only that Pro is available"
+if [ "${_RC}" -eq 0 ] && [ -z "${_ctx}" ]; then
+  pass "briefing/an empty briefing injects nothing"
 else
-  fail "briefing/an empty briefing says only that Pro is available" "got: ${_OUT:0:160}"
+  fail "briefing/an empty briefing injects nothing" "got: ${_OUT:0:160}"
 fi
 
 # ...but it must still hold the TTL. Caching only non-empty content means a
@@ -799,8 +798,8 @@ run_hook_with_debug_log ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_parsed_changes_only.txt"
 if [ "${_RC}" -ne 0 ]; then
   fail "briefing/parse events alone are not injected" "expected exit 0, got ${_RC}"
-elif [ "$(_bfr_ctx)" != "${_BFR_PRO_ONLY}" ]; then
-  fail "briefing/parse events alone are not injected" "expected only the Pro line, got: ${_OUT:0:160}"
+elif [ -n "$(_bfr_ctx)" ]; then
+  fail "briefing/parse events alone are not injected" "expected nothing injected, got: ${_OUT:0:160}"
 else
   pass "briefing/parse events alone are not injected"
 fi
@@ -817,16 +816,16 @@ fi
 assert_log_not_contains "briefing/nothing dropped from a skipped briefing" \
   "DROP briefing Recent Changes"
 
-# The Pro line means Pro answered. A briefing that failed (here: cut off by its
-# timeout) says nothing, not that Pro is available.
+# A briefing that failed (here: cut off by its timeout) injects nothing, as an
+# empty one does.
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
   run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" \
     IX_ANNOTATE_MODE="off" IX_BRIEFING_TIMEOUT="1" IX_MOCK_BRIEFING_SLEEP="3" \
     IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
-  if [ "${_RC}" -eq 0 ] && [[ "$(_bfr_ctx)" != *"Pro is available"* ]]; then
-    pass "briefing/no Pro line when the briefing fails"
+  if [ "${_RC}" -eq 0 ] && [ -z "$(_bfr_ctx)" ]; then
+    pass "briefing/a failed briefing injects nothing"
   else
-    fail "briefing/no Pro line when the briefing fails" "got: ${_OUT:0:160}"
+    fail "briefing/a failed briefing injects nothing" "got: ${_OUT:0:160}"
   fi
 fi
 
@@ -2254,8 +2253,8 @@ _ctx=$(_start_ctx)
 _expected="[ix] Starting points for this task, from Ix's graph (a starting point, not a restriction; verify anything you rely on):
 $(cat "${FX_IX}/context_lean.txt")
 ${_TOOL_HINT}"
-# The empty briefing adds only its one Pro line, after the block.
-if [ "${_ctx}" = "${_expected}"$'\n'"${_BFR_PRO_ONLY}" ]; then
+# The empty briefing adds nothing after the block.
+if [ "${_ctx}" = "${_expected}" ]; then
   pass "start/tool hint is the block's last line"
 else
   fail "start/tool hint is the block's last line" "got: ${_ctx}"
@@ -2267,11 +2266,11 @@ else
 fi
 
 # A briefing of parse events only is dropped; the start points and the hint
-# still go in, then the one line saying Pro is available, and nothing else.
+# still go in, and nothing else.
 run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ANNOTATE_MODE=off \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_parsed_changes_only.txt"
 _ctx=$(_start_ctx)
-if [ "${_RC}" -eq 0 ] && [ "${_ctx}" = "${_expected}"$'\n'"${_BFR_PRO_ONLY}" ]; then
+if [ "${_RC}" -eq 0 ] && [ "${_ctx}" = "${_expected}" ]; then
   pass "start/start points without a parse-only briefing"
 else
   fail "start/start points without a parse-only briefing" "got: ${_ctx:0:400}"

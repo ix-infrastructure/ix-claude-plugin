@@ -97,7 +97,6 @@ IX_HOOK_NAME="ix-briefing"
 _t0=""
 ix_log "ENTRY mode=${_mode:-off} channel=${_channel:-?} fresh=${_briefing_fresh}"
 BRIEFING=""
-_pro_quiet=0
 if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
   ix_log "RUN ix briefing (stale, Pro available)"
   ix_log_command ix briefing --format text
@@ -187,14 +186,10 @@ if [ "$_briefing_fresh" -eq 0 ] && ix_check_pro; then
     fi
   fi
   # Pro answered but had nothing worth saying (every group empty, or only parse
-  # events). Skills take an `[ix] Session briefing` as their sign that Pro is
-  # there (skills/shared.md); with none, a new Pro project would lose the
-  # `ix bug create` / `ix plan create` steps it needs to record its first bug
-  # or plan. So one line says Pro is there and nothing is on record.
-  if [ "$_fetched_ok" -eq 1 ] && [ -z "$BRIEFING" ]; then
-    _pro_quiet=1
-    ix_log "BRIEFING pro-only marker (nothing on record)"
-  fi
+  # events): inject nothing. A fixed "Pro is available, nothing on record" line
+  # on every briefing tells the model nothing it can act on, and a line that
+  # never changes is one the model learns to ignore. Skills read a missing
+  # briefing as "no Pro, or nothing on record" (skills/shared.md).
   ix_log "BRIEFING result=${#BRIEFING} chars"
 elif [ "$_briefing_fresh" -eq 1 ]; then
   ix_log "SKIP briefing TTL fresh"
@@ -228,13 +223,6 @@ if [ -n "$BRIEFING" ]; then
   fi
   ix_ledger_append "UserPromptSubmit" "Briefing" "${#_context}" "briefing" "1" "" "$_elapsed_ms" \
     "loaded project context up front from goals, plans, and recent decisions."
-elif [ "$_pro_quiet" -eq 1 ]; then
-  _briefing_block="[ix] Session briefing: Ix Pro is available; no goals, plans, decisions or open bugs are on record."
-  if [ -n "$_context" ]; then
-    _context="${_context}"$'\n'"${_briefing_block}"
-  else
-    _context="${_briefing_block}"
-  fi
 fi
 [ -n "$_annotation_instruction" ] && {
   if [ -n "$_context" ]; then
