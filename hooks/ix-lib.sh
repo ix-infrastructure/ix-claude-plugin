@@ -21,6 +21,7 @@
 #   ix_log_command          — log a fully expanded ix CLI command
 #   ix_log_injection        — log exact injected hook content with escaped newlines
 #   parse_json              — strip ix header noise, extract first JSON value
+#   ix_locate_is_exact      — accept an exact locate result with a usable definition
 #   ix_confidence_gate      — evaluate confidence; sets CONF_GATE (drop|warn|ok) and CONF_WARN
 #   ix_emit_context         — emit hookSpecificOutput.additionalContext for an event
 #   ix_hook_decide          — emit PreToolUse block/augment/allow output (legacy or structured block)
@@ -663,7 +664,7 @@ ix_query_intent() {
     QUERY_INTENT="literal"; return
   fi
 
-  # Otherwise treat as potential symbol — let confidence gating decide
+  # Otherwise treat as potential symbol — let exact locate resolution decide
 }
 
 # ── Secret / high-entropy pattern detector ───────────────────────────────────
@@ -704,10 +705,22 @@ ix_log() {
   printf '[%s] [%s] %s\n' "$_ts" "${IX_HOOK_NAME:-hook}" "$*" >> "${IX_DEBUG_LOG}" 2>/dev/null || true
 }
 
+# Usage: ix_locate_is_exact LOCATE_JSON
+# LocateOutput has no numeric confidence. Only the CLI's explicit exact mode
+# with a usable resolved target can supply context or justify opt-in Grep denial.
+# Missing/unknown modes fail safely to native search.
+ix_locate_is_exact() {
+  printf '%s\n' "$1" | jq -e '
+    .resolutionMode == "exact"
+    and (.resolvedTarget.name | type == "string" and length > 0)
+    and (.resolvedTarget.path | type == "string" and length > 0)
+  ' >/dev/null 2>&1
+}
+
 # ── What grep cannot say about a name ────────────────────────────────────────
 # Usage: ix_definition_context LOCATE_RAW
-# Sets global: DEF_PART — empty unless locate resolved one definition with
-# confidence >= 0.6. Then: where it is defined, and who calls it, at the call
+# Sets global: DEF_PART — empty unless locate resolved one definition in
+# resolutionMode "exact". Then: where it is defined, and who calls it, at the call
 # site, nearest the definition's file first:
 #   [ix] `beta` (function) is defined at src/lib.js:5-7; called from 2 places:
 #   src/app.js:4 `return beta(1);` · src/report.js:5 `return …`
@@ -721,17 +734,14 @@ ix_log() {
 # calls, is the part only the graph knows. `ix callers` runs bounded (IX_CALLERS_TIMEOUT, default 4s); a failure
 # or timeout leaves the definition on its own.
 ix_definition_context() {
-  local _raw="$1" _json _name _kind _path _conf _start _end _where _cal_raw _cal_json _total _sites _more _dir
+  local _raw="$1" _json _name _kind _path _start _end _where _cal_raw _cal_json _total _sites _more _dir
   DEF_PART=""
   _json=$(parse_json "$_raw")
-  [ -z "$_json" ] && return 0
+  ix_locate_is_exact "$_json" || return 0
   _name=$(echo "$_json" | jq -r '.resolvedTarget.name // empty' 2>/dev/null || echo "")
   _path=$(echo "$_json" | jq -r '.resolvedTarget.path // empty' 2>/dev/null || echo "")
   [ -z "$_name" ] || [ -z "$_path" ] && return 0
-  _conf=$(echo "$_json" | jq -r '(.confidence // .resolvedTarget.confidence // 1) | tostring' 2>/dev/null || echo "1")
-  ix_confidence_gate "${_conf:-1}"
-  [ "$CONF_GATE" = "ok" ] || return 0
-  _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // .resolvedTarget.type // "symbol"' 2>/dev/null || echo "symbol")
+  _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // "symbol"' 2>/dev/null || echo "symbol")
   _start=$(echo "$_json" | jq -r '.lineRange.start // empty' 2>/dev/null || echo "")
   _end=$(echo "$_json" | jq -r '.lineRange.end // empty' 2>/dev/null || echo "")
   _where="$_path"
@@ -769,7 +779,7 @@ ix_definition_context() {
 # Usage: ix_summarize_locate RAW_OUTPUT
 # Sets global: LOC_PART (empty string if no results)
 ix_summarize_locate() {
-  local _raw="$1" _json _resolved _kind _file _cands
+  local _raw="$1" _json _resolved _kind _file
   LOC_PART=""
   _json=$(parse_json "$_raw")
   [ -z "$_json" ] && return 0
@@ -778,9 +788,6 @@ ix_summarize_locate() {
     _kind=$(echo "$_json" | jq -r '.resolvedTarget.kind // ""' 2>/dev/null || echo "")
     _file=$(echo "$_json" | jq -r '(.resolvedTarget.path // "") | split("/")[-1]' 2>/dev/null || echo "")
     LOC_PART="symbol: ${_resolved} (${_kind}${_file:+, $_file})"
-  else
-    _cands=$(echo "$_json" | jq -r '.candidates[:3] | map(.name + " (" + .kind + ")") | join(", ")' 2>/dev/null || echo "")
-    [ -n "$_cands" ] && LOC_PART="candidates: ${_cands}"
   fi
   return 0
 }
