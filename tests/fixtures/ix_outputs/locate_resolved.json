@@ -1,9 +1,13 @@
 {
   "resolvedTarget": {
-    "name": "AuthService",
+    "id": "auth-service",
     "kind": "class",
-    "path": "src/auth.ts",
-    "confidence": 0.95
+    "name": "AuthService",
+    "path": "src/auth.ts"
   },
-  "confidence": 0.95
+  "resolutionMode": "exact",
+  "lineRange": null,
+  "container": null,
+  "systemPath": [],
+  "diagnostics": []
 }

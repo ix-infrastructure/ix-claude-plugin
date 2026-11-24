@@ -517,6 +517,8 @@ section "Pro probe"
 # It did not: the timestamp was written only after `ix briefing` returned, so a
 # hook killed at its 10s timeout re-probed on the next prompt, and the one after
 # that — a stall on every prompt for as long as the backend was slow.
+# Use non-login shells for both probes so startup files cannot replace the mock
+# PATH with an installed ix (which can also make the stalled probe pass falsely).
 _pro_tmp=$(mktemp -d -p "${TEST_TMPDIR}")
 _RC=0
 _OUT=$(env \
@@ -526,7 +528,7 @@ _OUT=$(env \
   IX_MOCK_BRIEFING_SLEEP=6 \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash -lc '
+  bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     _t0=$(date +%s)
     ix_health_check
@@ -667,7 +669,7 @@ _OUT=$(env \
   IX_HEALTH_CACHE="${_pro_ok_tmp}/ix-healthy" \
   IX_ERROR_MODE="off" \
   PATH="${TESTS_DIR}:${PATH}" \
-  bash -lc '
+  bash -c '
     source "'"${HOOKS_DIR}"'/lib/index.sh"
     ix_health_check
     if ix_check_pro; then printf "pro\n"; else printf "oss\n"; fi
@@ -836,7 +838,21 @@ else
   pass "lib/ix_looks_like_secret snake-case alternation"
 fi
 
-# Plain symbol → high-confidence exact match. The answer is injected either
+# Keep mock locate responses within the LocateOutput wire contract (#59).
+# In particular, invented confidence/candidates keys must not mask gate bugs.
+for _locate_fixture in "${FX_IX}"/locate_*.json; do
+  if jq -e '
+    keys == ["container", "diagnostics", "lineRange", "resolutionMode", "resolvedTarget", "systemPath"]
+    and (.resolvedTarget == null or
+         (.resolvedTarget | keys == ["id", "kind", "name", "path"]))
+  ' "${_locate_fixture}" >/dev/null; then
+    pass "locate fixture wire keys: $(basename "${_locate_fixture}")"
+  else
+    fail "locate fixture wire keys: $(basename "${_locate_fixture}")" "unexpected LocateOutput fields"
+  fi
+done
+
+# Plain symbol → exact match. The answer is injected either
 # way; IX_BLOCK_ON_HIGH_CONFIDENCE decides whether the native Grep is also
 # denied, and it is off by default (denying costs a whole turn to save a call).
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json"
@@ -862,11 +878,11 @@ assert_block_decision "intercept/grep dotted symbol blocks" "Found: AuthService 
 run_hook ix-intercept.sh "${FX_IN}/grep_regex.json"
 assert_empty "intercept/grep regex literal"
 
-# Candidates but no one definition → nothing the Grep's own results lack:
+# Ambiguous result with no resolved target → nothing the Grep's own results lack:
 # silent, the native Grep answers.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
-assert_empty "intercept/candidates without one definition stay silent"
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous.json"
+assert_empty "intercept/ambiguous result without one definition stays silent"
 
 # ── Ix#539: `ix locate` exiting non-zero while still printing a body ──────────
 # An unresolved target is about to exit non-zero with its JSON payload intact.
@@ -874,12 +890,12 @@ assert_empty "intercept/candidates without one definition stay silent"
 # failure -- otherwise every symbol a user asks about that does not exist files
 # an error, burying the real failures.
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous.json" \
   IX_MOCK_LOCATE_EXIT=1
-assert_empty "intercept/non-zero locate with candidates stays silent"
+assert_empty "intercept/non-zero locate with ambiguous result stays silent"
 
 run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json" \
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous.json" \
   IX_MOCK_LOCATE_EXIT=1
 assert_log_contains "intercept/non-zero locate with a body is a miss, not a failure" \
   "MISS ix locate exited 1 with a body"
@@ -918,12 +934,36 @@ assert_empty "intercept/secret pattern suppressed"
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_MOCK_FAIL=1
 assert_empty "intercept/ix failure degrades gracefully"
 
-# Low-confidence locate → allow native Grep with no injection
+# Fuzzy locate → allow native Grep with no injection
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
-  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "intercept/low confidence locate allows native Grep"
+  IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "intercept/fuzzy locate allows native Grep"
 
-# Escape hatch disables blocking even for exact high-confidence matches
+# A real locate payload has resolutionMode, not a numeric confidence. In
+# particular, a fuzzy resolved target must never deny Grep, in either style.
+for _style in legacy structured; do
+  for _locate_case in fuzzy ambiguous; do
+    run_hook_with_debug_log ix-intercept.sh "${FX_IN}/grep_plain.json" \
+      IX_MOCK_LOCATE_FILE="${FX_IX}/locate_${_locate_case}.json" \
+      IX_BLOCK_ON_HIGH_CONFIDENCE=1 IX_HOOK_OUTPUT_STYLE="${_style}"
+    assert_empty "intercept/${_locate_case} never denies Grep (${_style})"
+    assert_log_not_contains "intercept/${_locate_case} skips callers (${_style})" "CMD ix callers"
+  done
+done
+
+# Fail safely for CLI versions with absent/unknown modes or incomplete targets.
+_LOCATE_UNSAFE=$(mktemp -p "${TEST_TMPDIR}" --suffix=.json)
+for _mutation in 'del(.resolutionMode)' '.resolutionMode = "future-mode"' \
+    'del(.resolvedTarget.name)' '.resolvedTarget.path = ""'; do
+  jq "${_mutation}" "${FX_IX}/locate_resolved.json" > "${_LOCATE_UNSAFE}"
+  run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" \
+    IX_MOCK_LOCATE_FILE="${_LOCATE_UNSAFE}" IX_BLOCK_ON_HIGH_CONFIDENCE=1
+  assert_empty "intercept/unsafe locate allows native Grep: ${_mutation}"
+  run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${_LOCATE_UNSAFE}"
+  assert_empty "bash/unsafe locate stays silent: ${_mutation}"
+done
+
+# Escape hatch disables blocking even for exact matches
 run_hook ix-intercept.sh "${FX_IN}/grep_plain.json" IX_BLOCK_ON_HIGH_CONFIDENCE=0
 assert_additional_context "intercept/block escape hatch augments" "is defined at src/auth.ts"
 
@@ -1128,13 +1168,13 @@ else
   pass "bash/no grep hits repeated back, no ix nudge"
 fi
 
-# Candidates but no one definition → the shell grep answers alone.
-run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_candidates.json"
-assert_empty "bash/candidates without one definition stay silent"
+# Ambiguous result with no resolved target → the shell grep answers alone.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_ambiguous.json"
+assert_empty "bash/ambiguous result without one definition stays silent"
 
-# A low-confidence resolution is not worth a line.
-run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_low_confidence.json"
-assert_empty "bash/low confidence stays silent"
+# A fuzzy resolution is not worth a line.
+run_hook ix-bash.sh "${_BASH_GREP_FIXTURE}" IX_MOCK_LOCATE_FILE="${FX_IX}/locate_fuzzy.json"
+assert_empty "bash/fuzzy stays silent"
 
 # An alternation is a grep expression, not a symbol: nothing in the graph is
 # named `a|b`, so the two ix calls could only come back empty. It must be

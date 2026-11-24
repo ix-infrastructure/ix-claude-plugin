@@ -1,0 +1,13 @@
+{
+  "resolvedTarget": {
+    "id": "auth-service",
+    "kind": "class",
+    "name": "AuthService",
+    "path": "src/auth.ts"
+  },
+  "resolutionMode": "fuzzy",
+  "lineRange": null,
+  "container": null,
+  "systemPath": [],
+  "diagnostics": []
+}

@@ -359,7 +359,7 @@ ix-errors.sh and ix-lib.sh in one call, creating a single import hub for the gra
 **ix_summarize_locate(raw)**
 - Parses locate results, sets global `LOC_PART`
 - Format if resolved: "symbol: Name (kind, file.ts)"
-- Format if ambiguous: "candidates: A (fn), B (class), C (fn)"
+- Empty if no target is resolved; `ix locate` does not emit a top-level candidates list.
 
 ---
 

@@ -4,7 +4,7 @@
 # ix-bash.sh — PreToolUse hook for Bash
 #
 # Fires before Claude runs a Bash command. Detects grep/rg search patterns and,
-# when the pattern names one definition in the graph, says what the grep will
+# when locate resolves the pattern in exact mode, says what the grep will
 # not: where it is defined and who calls it (ix_definition_context). Otherwise
 # it stays silent and the grep answers on its own.
 #
@@ -91,7 +91,7 @@ rm -f "$_loc_err"
 [ -z "$_LOC_RAW" ] && { ix_log "SKIP empty ix locate"; exit 0; }
 
 ix_definition_context "$_LOC_RAW"
-[ -z "$DEF_PART" ] && { ix_log "SKIP no single confident definition — grep answers alone"; exit 0; }
+[ -z "$DEF_PART" ] && { ix_log "SKIP no single exact definition — grep answers alone"; exit 0; }
 CONTEXT="$DEF_PART"
 
 _elapsed_ms=$(( $(ix_now_ms) - _t0 ))
