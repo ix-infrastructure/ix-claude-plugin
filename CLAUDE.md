@@ -19,7 +19,6 @@ teaching, hook-driven context injection, and higher-level reasoning skills.
 ```text
 skills/
   shared.md                  canonical install-time Ix model
-  ix-help/                   router skill
   ix-understand/             architecture mental model
   ix-investigate/            symbol deep dive
   ix-impact/                 pre-edit blast radius
