@@ -3634,6 +3634,37 @@ else
   fail "docs/every ix-*.sh a doc names exists" "missing:${_missing_hooks}"
 fi
 
+# Every relative Markdown link under skills/ resolves, and every `/ix-<name>`
+# slash command a doc names is a skill the plugin ships (#63: skills sent the
+# model to an `/ix-help` that did not exist).
+_broken_links=""
+while IFS= read -r -d '' _f; do
+  _dir=$(dirname "${_f}")
+  for _target in $(grep -oE '\]\([^)[:space:]]+\)' "${_f}" | sed -E 's/^\]\(//; s/\)$//'); do
+    case "${_target}" in
+      http://*|https://*|mailto:*|\#*) continue ;;
+    esac
+    _path="${_target%%#*}"
+    [ -e "${_dir}/${_path}" ] || _broken_links="${_broken_links} ${_f#"${_REPO_DIR}/"}->${_target}"
+  done
+done < <(find "${_REPO_DIR}/skills" -name '*.md' -print0)
+if [ -z "${_broken_links}" ]; then
+  pass "docs/every relative link under skills/ resolves"
+else
+  fail "docs/every relative link under skills/ resolves" "broken:${_broken_links}"
+fi
+
+_missing_skills=""
+for _s in $(grep -rhoE '`/ix-[a-z0-9-]+' "${_REPO_DIR}/skills" "${_REPO_DIR}/README.md" "${_REPO_DIR}/CLAUDE.md" 2>/dev/null \
+    | sed 's/^`\///' | sort -u); do
+  [ -f "${_REPO_DIR}/skills/${_s}/SKILL.md" ] || _missing_skills="${_missing_skills} /${_s}"
+done
+if [ -z "${_missing_skills}" ]; then
+  pass "docs/every /ix-* slash command a doc names is a shipped skill"
+else
+  fail "docs/every /ix-* slash command a doc names is a shipped skill" "missing:${_missing_skills}"
+fi
+
 # _list_md_files: ignored local notes are skipped in git, found outside it.
 _LMD=$(mktemp -d -p "${TEST_TMPDIR}")
 mkdir -p "${_LMD}/repo/docs" "${_LMD}/plain"
