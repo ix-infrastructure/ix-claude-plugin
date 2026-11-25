@@ -50,8 +50,10 @@ Required flags:
 
 Pro features require an Ix Pro backend. **Detect it from the session briefing,
 not with a command.** The plugin's UserPromptSubmit hook injects an
-`[ix] Session briefing` once per TTL whenever Pro is reachable, so: seen one this
-session → Pro is available; not seen one → treat Pro steps as unavailable.
+`[ix] Session briefing` once per TTL whenever Pro is reachable and has goals,
+plans, decisions or open bugs on record, so: seen one this session → Pro is
+available; not seen one → there is no Pro, or nothing is on record, and either way
+the Pro steps that read from the briefing have nothing to read: skip them.
 
 Running `ix briefing` yourself to find out costs a whole turn to learn something
 already in your context. And never append `2>&1` to an `ix` command: it folds the
@@ -77,11 +79,11 @@ The injected briefing is the text rendering, with a `Revision`, a last-ingest
 time, and a section per non-empty group: `Goals`, `Plans`, `Recent Decisions`,
 `Open Bugs`, `Recent Changes`. A Recent Changes section of parse events only
 (`rev N Parsed <file>`) is left out. When Goals, Plans, Recent Decisions and
-Open Bugs are all empty (Recent Changes alone does not count), the briefing is
-one line instead: `[ix] Session briefing: Ix Pro is available; no goals, plans,
-decisions or open bugs are on record.` That still means Pro is available: skip
-the steps that read goals, bugs or decisions, but keep the ones that create
-them (`ix bug create`, `ix plan create`). No briefing line at all means no Pro.
+Open Bugs are all empty (Recent Changes alone does not count), nothing is
+injected. To record a first bug or plan on a project with no briefing, run the
+command (`ix bug create`, `ix plan create`) when the user asks for it: without Pro
+the CLI answers `The '<name>' command requires Ix Pro.`, which is the definitive
+"no Pro" signal. Do not probe for Pro with `ix briefing` or `--help`.
 
 ⚠ **`--format llm` does nothing on a Pro command.** @ix/pro declares only
 `text|json`, and asking for a format it does not have never errors — it silently
