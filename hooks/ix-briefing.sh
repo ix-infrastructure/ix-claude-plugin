@@ -81,7 +81,12 @@ if [ "${IX_ISSUE_START:-on}" != "off" ]; then
       | ix_run_bounded "${IX_ISSUE_START_TIMEOUT:-6}" ix context --from-issue - --lean --format text 2>/dev/null) \
       || _start_points=""
     case "$_start_points" in
-      "Ix found no confident starting point"*) ix_log "SKIP start points (Ix trusts none)"; _start_points="" ;;
+      # Log Ix's own line, not just the verdict: it says why (nothing in the
+      # issue resolved, too many candidates, ...), which is what a debug log
+      # is read for. Its first line only, capped at 400 characters.
+      "Ix found no confident starting point"*)
+        ix_log "SKIP start points (Ix trusts none): $(printf '%s' "$_start_points" | head -1 | tr -d '\r' | cut -c1-400)"
+        _start_points="" ;;
     esac
     ix_log "START points=${#_start_points} chars"
   fi
