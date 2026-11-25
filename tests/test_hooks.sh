@@ -2241,13 +2241,23 @@ run_hook ix-briefing.sh "${_START_FIXTURE}"
 assert_additional_context "start/starting points beside the session briefing" "[ix] Session briefing:"
 assert_additional_context "start/session briefing beside the starting points" "[ix] Starting points for this task"
 
-# ── The start-points block ends with one line naming the ix commands ─────────
-# The model never ran `ix` on its own; this is the only place it learns the
-# command is in its shell, and only when the block is injected at all.
+# ── Optional: the start-points block can end with one line naming ix commands ─
+# Off by default (the model never ran `ix` after reading it). With
+# IX_BRIEFING_TOOL_HINT=on it closes the start-points block, and only that block.
 _TOOL_HINT="Ix also answers in this shell: ix callers <symbol> / ix impact <symbol> (who uses it, what breaks if it changes), ix locate <name> (where it is defined). Read-only; cheaper than repeated grep for common names."
 _start_ctx() { echo "${_OUT}" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null || true; }
 
+# Default: the start points go in without the hint.
 run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ANNOTATE_MODE=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+assert_additional_context "start/default keeps the start points" "[ix] Starting points for this task"
+if printf '%s' "$(_start_ctx)" | grep -q "ix callers"; then
+  fail "start/no tool hint by default" "got: ${_OUT}"
+else
+  pass "start/no tool hint by default"
+fi
+
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on IX_ANNOTATE_MODE=off \
+  IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
 assert_additional_context "start/tool hint with the starting points" "${_TOOL_HINT}"
 _ctx=$(_start_ctx)
 _expected="[ix] Starting points for this task, from Ix's graph (a starting point, not a restriction; verify anything you rely on):
@@ -2267,7 +2277,7 @@ fi
 
 # A briefing of parse events only is dropped; the start points and the hint
 # still go in, and nothing else.
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ANNOTATE_MODE=off \
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on IX_ANNOTATE_MODE=off \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_parsed_changes_only.txt"
 _ctx=$(_start_ctx)
 if [ "${_RC}" -eq 0 ] && [ "${_ctx}" = "${_expected}" ]; then
@@ -2277,7 +2287,7 @@ else
 fi
 
 # With a session briefing too: the hint closes the start points, before it.
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ANNOTATE_MODE=off
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on IX_ANNOTATE_MODE=off
 _ctx=$(_start_ctx)
 _before="${_ctx%%\[ix\] Session briefing:*}"
 if [ "${_before}" != "${_ctx}" ] && [ "${_before}" = "${_expected}"$'\n' ]; then
@@ -2287,20 +2297,20 @@ else
 fi
 
 # No start points, no hint: a briefing-only prompt stays as it was.
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_MOCK_CONTEXT_FILE="${FX_IX}/context_lean_none.txt"
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on IX_MOCK_CONTEXT_FILE="${FX_IX}/context_lean_none.txt"
 assert_additional_context "start/briefing still injected without start points" "[ix] Session briefing:"
 if printf '%s' "$(_start_ctx)" | grep -q "ix callers"; then
   fail "start/no tool hint without start points" "got: ${_OUT}"
 else
   pass "start/no tool hint without start points"
 fi
-run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}"
+run_hook ix-briefing.sh "${_USER_PROMPT_FIXTURE}" IX_BRIEFING_TOOL_HINT=on
 if printf '%s' "${_OUT}" | grep -q "ix callers"; then
   fail "start/no tool hint on a short prompt" "got: ${_OUT}"
 else
   pass "start/no tool hint on a short prompt"
 fi
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ISSUE_START=off
+run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on IX_ISSUE_START=off
 if printf '%s' "${_OUT}" | grep -q "ix callers"; then
   fail "start/no tool hint with IX_ISSUE_START=off" "got: ${_OUT}"
 else
@@ -2318,9 +2328,11 @@ for _hint_off in off 0 false; do
     pass "start/IX_BRIEFING_TOOL_HINT=${_hint_off} drops the hint"
   fi
 done
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT=on \
-  IX_ANNOTATE_MODE=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
-assert_additional_context "start/IX_BRIEFING_TOOL_HINT=on keeps the hint" "${_TOOL_HINT}"
+for _hint_on in on 1 true; do
+  run_hook ix-briefing.sh "${_START_FIXTURE}" IX_BRIEFING_TOOL_HINT="${_hint_on}" \
+    IX_ANNOTATE_MODE=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
+  assert_additional_context "start/IX_BRIEFING_TOOL_HINT=${_hint_on} adds the hint" "${_TOOL_HINT}"
+done
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ix-annotate.sh — Stop hook attribution
