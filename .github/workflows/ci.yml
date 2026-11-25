@@ -191,8 +191,8 @@ jobs:
 
   # The hooks against a released ix CLI instead of tests/mock-ix.sh, with no
   # backend (IX_ENDPOINT is a closed port). Fails when a hook passes a flag the
-  # pinned CLI does not have, or mishandles what the real CLI prints. Not in
-  # `ci-success` yet: it reports on the PR without gating merges.
+  # pinned CLI does not have, or mishandles what the real CLI prints. Gated by
+  # `ci-success` since 2026-11-25, after 30 consecutive green runs.
   real-ix:
     name: Hooks against real ix
     runs-on: ubuntu-latest
@@ -239,12 +239,20 @@ jobs:
   ci-success:
     name: CI Passed
     if: always()
-    needs: [validate, shellcheck, hooks-tests]
+    needs: [validate, shellcheck, hooks-tests, real-ix]
     runs-on: ubuntu-latest
     steps:
+      # Every job in `needs` is printed and checked, one test per line, so a
+      # failed, skipped or cancelled job fails the gate and shows which one.
       - name: Verify all required jobs succeeded
         run: |
           echo "validate=${{ needs.validate.result }}"
           echo "shellcheck=${{ needs.shellcheck.result }}"
-          [ "${{ needs.validate.result }}" = "success" ] \
-            && [ "${{ needs.shellcheck.result }}" = "success" ]
+          echo "hooks-tests=${{ needs.hooks-tests.result }}"
+          echo "real-ix=${{ needs.real-ix.result }}"
+          fail=0
+          [ "${{ needs.validate.result }}" = "success" ] || fail=1
+          [ "${{ needs.shellcheck.result }}" = "success" ] || fail=1
+          [ "${{ needs.hooks-tests.result }}" = "success" ] || fail=1
+          [ "${{ needs.real-ix.result }}" = "success" ] || fail=1
+          exit "$fail"
