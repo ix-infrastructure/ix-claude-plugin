@@ -2206,13 +2206,17 @@ else
   pass "start/only the session's first prompt"
 fi
 
-run_hook ix-briefing.sh "${_START_FIXTURE}" IX_MOCK_CONTEXT_FILE="${FX_IX}/context_lean_none.txt" \
+run_hook_with_debug_log ix-briefing.sh "${_START_FIXTURE}" IX_MOCK_CONTEXT_FILE="${FX_IX}/context_lean_none.txt" \
   IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
 if printf '%s' "${_OUT}" | grep -q "Starting points\|no confident starting point"; then
   fail "start/no line when Ix trusts no starting point" "got: ${_OUT}"
 else
   pass "start/no line when Ix trusts no starting point"
 fi
+# The debug log keeps Ix's reason, not just the verdict.
+assert_log_contains "start/the trusts-none log line carries Ix's reason" \
+  "SKIP start points (Ix trusts none): Ix found no confident starting point for this issue: nothing in the issue resolved to a definition."
+
 
 run_hook ix-briefing.sh "${_START_FIXTURE}" IX_ISSUE_START=off IX_MOCK_BRIEFING_FILE="${FX_IX}/briefing_empty.txt"
 if printf '%s' "${_OUT}" | grep -q "Starting points"; then
