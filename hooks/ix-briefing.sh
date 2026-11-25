@@ -203,13 +203,14 @@ _elapsed_ms=0
 _context=""
 if [ -n "$_start_points" ]; then
   _context="[ix] Starting points for this task, from Ix's graph (a starting point, not a restriction; verify anything you rely on):"$'\n'"${_start_points}"
-  # One line saying `ix` is a command in the model's shell. With the skills
-  # hidden from the model (#53) nothing else tells it, and it never ran ix on
-  # its own. Only here, beside start points it already gets: a session with no
-  # start points pays nothing. IX_BRIEFING_TOOL_HINT=off (or 0/false) drops it.
-  case "${IX_BRIEFING_TOOL_HINT:-on}" in
-    off|0|false) ;;
-    *) _context="${_context}"$'\n'"Ix also answers in this shell: ix callers <symbol> / ix impact <symbol> (who uses it, what breaks if it changes), ix locate <name> (where it is defined). Read-only; cheaper than repeated grep for common names." ;;
+  # Optional: one line saying `ix` is a command in the model's shell. Off by
+  # default: in agent runs on real tasks the model never ran an `ix` command
+  # after reading it, so the line only added prompt text. The start points
+  # above are what changed where it looked first. IX_BRIEFING_TOOL_HINT=on
+  # (or 1/true) adds it back, beside start points only.
+  case "${IX_BRIEFING_TOOL_HINT:-off}" in
+    on|1|true) _context="${_context}"$'\n'"Ix also answers in this shell: ix callers <symbol> / ix impact <symbol> (who uses it, what breaks if it changes), ix locate <name> (where it is defined). Read-only; cheaper than repeated grep for common names." ;;
+    *) ;;
   esac
   ix_ledger_append "UserPromptSubmit" "StartPoints" "${#_context}" "context" "1" "" "0" \
     "pointed at the files Ix trusts as starting points for the task."
